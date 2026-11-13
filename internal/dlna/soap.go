@@ -126,7 +126,7 @@ func writeSOAP(w http.ResponseWriter, status int, body []byte) {
 }
 
 // control dispatches a POSTed SOAP request to a service handler.
-func (s *Server) control(w http.ResponseWriter, r *http.Request, dispatch func(http.ResponseWriter, soapRequest)) {
+func (s *Server) control(w http.ResponseWriter, r *http.Request, dispatch func(http.ResponseWriter, *http.Request, soapRequest)) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -149,7 +149,7 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request, dispatch func(h
 		_, _ = w.Write(soapFault(w, upnpInvalidAction, "no SOAP action"))
 		return
 	}
-	dispatch(w, soapRequest{Action: action, Args: args})
+	dispatch(w, r, soapRequest{Action: action, Args: args})
 }
 
 // esc writes s to b as escaped XML text.

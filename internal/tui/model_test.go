@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/pandaCaffeine/diadem/internal/clients"
 	"github.com/pandaCaffeine/diadem/internal/library"
 )
 
@@ -55,7 +56,7 @@ func TestViewRendersLibrary(t *testing.T) {
 		}
 	}
 
-	m, view := runToView(t, New("Diadem", dir, 8200))
+	m, view := runToView(t, New("Diadem", dir, 8200, nil))
 	for _, want := range []string{
 		"Diadem", "http://127.0.0.1:8200", // header: title and serving URL
 		"movies",                   // container row
@@ -85,7 +86,7 @@ func TestNavigationAndPopup(t *testing.T) {
 	}
 
 	// rows: root, sub, a.mp4 — walk down to the item and open details.
-	m, view := runToView(t, New("Diadem", dir, 8200), "j", "j", "enter")
+	m, view := runToView(t, New("Diadem", dir, 8200, nil), "j", "j", "enter")
 	for _, want := range []string{
 		"Kind", "video", "42 B", "a.mp4",
 		"URL", "http://127.0.0.1:8200/files/sub/a.mp4", // fetchable URL in the popup
@@ -116,7 +117,7 @@ func TestRescanKeepsTreeUsable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "a.mkv"), make([]byte, 1), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m, _ := runToView(t, New("Diadem", dir, 8200))
+	m, _ := runToView(t, New("Diadem", dir, 8200, nil))
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	m = next.(Model)
@@ -134,5 +135,44 @@ func TestRescanKeepsTreeUsable(t *testing.T) {
 	m = next.(Model)
 	if m.scanning || m.lib.Items != 2 {
 		t.Errorf("after rescan: scanning=%v items=%d, want false/2", m.scanning, m.lib.Items)
+	}
+}
+
+func TestClientsTab(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "movie.mkv"), make([]byte, 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tracker := clients.NewTracker()
+	m, view := runToView(t, New("Diadem", dir, 8200, tracker))
+
+	// No clients yet: the empty state shows after switching tabs.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(Model)
+	view = m.View()
+	if !strings.Contains(view, "no clients yet") {
+		t.Errorf("clients tab should show the empty state:\n%s", view)
+	}
+	if strings.Contains(view, "↑/↓") {
+		t.Error("clients tab footer should not advertise tree navigation")
+	}
+
+	// A client appears once activity happens and the tick fires.
+	tracker.ObserveBrowse("192.0.2.9", "VLC/3.0.21 LibVLC/3.0.21", "movies")
+	next, _ = m.Update(clientsTickMsg{})
+	m = next.(Model)
+	view = m.View()
+	for _, want := range []string{"192.0.2.9", "VLC/3.0.21", "browsing movies", "now"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("clients tab missing %q:\n%s", want, view)
+		}
+	}
+
+	// Tab toggles back to the library tree.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(Model)
+	if !strings.Contains(m.View(), "movie.mkv") {
+		t.Error("switching back should show the library tree again")
 	}
 }

@@ -7,14 +7,45 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/pandaCaffeine/diadem/internal/clients"
 	"github.com/pandaCaffeine/diadem/internal/httpd"
 	"github.com/pandaCaffeine/diadem/internal/library"
 )
+
+// tab is the screen currently on display. The Logs tab arrives in a later
+// step.
+type tab uint8
+
+const (
+	tabLibrary tab = iota
+	tabClients
+)
+
+func (t tab) name() string {
+	if t == tabClients {
+		return "Clients"
+	}
+	return "Library"
+}
+
+// clientsTickMsg refreshes the Clients list from the tracker.
+type clientsTickMsg time.Time
+
+const clientsRefreshEvery = 500 * time.Millisecond
+
+// clientsTick polls the tracker snapshot on a timer — simple and "almost
+// instant" for human eyes.
+func clientsTick() tea.Cmd {
+	return tea.Tick(clientsRefreshEvery, func(t time.Time) tea.Msg {
+		return clientsTickMsg(t)
+	})
+}
 
 // scannedMsg carries a library.Scan result into the TUI event loop.
 type scannedMsg struct {
@@ -42,6 +73,10 @@ type Model struct {
 	path string // absolute Library path
 	port int    // HTTP port; the server itself arrives in step 2
 
+	tab        tab
+	tracker    *clients.Tracker
+	clientRows []clients.Client
+
 	lib      *library.Library
 	tree     *TreeView
 	scanning bool
@@ -56,14 +91,16 @@ type Model struct {
 	height  int
 }
 
-// New builds the model. path must be absolute.
-func New(name, path string, port int) Model {
+// New builds the model. path must be absolute; tracker may be nil in tests
+// that do not exercise the Clients tab.
+func New(name, path string, port int, tracker *clients.Tracker) Model {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(spinnerStyle))
 	host := httpd.LocalIPv4()
 	return Model{
 		name:     name,
 		path:     path,
 		port:     port,
+		tracker:  tracker,
 		tree:     NewTreeView(nil),
 		scanning: true,
 		spinner:  sp,
@@ -73,7 +110,7 @@ func New(name, path string, port int) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, ScanCmd(m.path))
+	return tea.Batch(m.spinner.Tick, ScanCmd(m.path), clientsTick())
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -100,6 +137,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case clientsTickMsg:
+		if m.tracker != nil {
+			m.clientRows = m.tracker.Snapshot()
+		}
+		return m, clientsTick()
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -118,11 +161,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
+	case "tab":
+		m.tab = (m.tab + 1) % 2
+		return m, nil
+	case "shift+tab":
+		m.tab = (m.tab + 1) % 2 // two tabs: same destination either way
+		return m, nil
 	case "r":
 		if !m.scanning {
 			m.scanning = true
 			return m, tea.Batch(m.spinner.Tick, ScanCmd(m.path))
 		}
+	}
+
+	if m.tab != tabLibrary {
+		return m, nil // the Clients list is view-only for now
+	}
+
+	switch msg.String() {
 	case "up", "k":
 		m.tree.Move(-1)
 	case "down", "j":
@@ -190,6 +246,9 @@ func (m Model) headerView() string {
 }
 
 func (m Model) bodyView() string {
+	if m.tab == tabClients {
+		return m.clientsView()
+	}
 	h := m.tree.Height
 	lines := make([]string, 0, h)
 	switch {
@@ -244,13 +303,99 @@ func (m Model) rowView(r Row, selected bool) string {
 	return line
 }
 
+// clientsView renders the Clients tab: who is talking to us and what they
+// are doing right now.
+func (m Model) clientsView() string {
+	h := m.tree.Height
+	lines := make([]string, 0, h)
+	if len(m.clientRows) == 0 {
+		lines = append(lines, styleDim.Render("no clients yet — open VLC on your TV or laptop and it will appear here"))
+	} else {
+		lines = append(lines, styleDim.Render("CLIENTS"))
+		for _, c := range m.clientRows {
+			if len(lines) >= h {
+				break
+			}
+			lines = append(lines, m.clientRow(c))
+		}
+	}
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines[:h], "\n")
+}
+
+func (m Model) clientRow(c clients.Client) string {
+	width := max(m.tree.Width, 40)
+
+	dot := styleDim.Render("○")
+	active := time.Since(c.LastSeen) < clients.ActiveSince
+	if active {
+		dot = styleAudio.Render("●") // green: spoken to us just now
+	}
+
+	name := c.IP
+	if ua := shortUserAgent(c.UserAgent); ua != "" {
+		name = ua + " " + styleDim.Render(c.IP)
+	}
+
+	activity := c.Kind.String()
+	if c.Target != "" {
+		activity += " " + c.Target
+	}
+
+	row := dot + " " + styleTitle.Render(truncate(name, 30)) + "  " +
+		truncate(activity, width-46) + "  " + styleDim.Render(humanAgo(c.LastSeen))
+	return row
+}
+
+// shortUserAgent picks the product token out of a User-Agent like
+// "VLC/3.0.21 LibVLC/3.0.21" → "VLC/3.0.21".
+func shortUserAgent(ua string) string {
+	if ua == "" {
+		return ""
+	}
+	token := ua
+	if i := strings.IndexByte(ua, ' '); i > 0 {
+		token = ua[:i]
+	}
+	if len(token) > 24 {
+		token = token[:24]
+	}
+	return token
+}
+
+// humanAgo renders a coarse "5s ago"-style age.
+func humanAgo(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < 2*time.Second:
+		return "now"
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
+}
+
 func (m Model) footerView() string {
-	hints := strings.Join([]string{
-		keyHint("↑/↓", "move"),
-		keyHint("⏎", "open"),
-		keyHint("r", "rescan"),
-		keyHint("q", "quit"),
-	}, styleDim.Render("   ·   "))
+	var hints string
+	if m.tab == tabClients {
+		hints = strings.Join([]string{
+			keyHint("tab", "library"),
+			keyHint("q", "quit"),
+		}, styleDim.Render("   ·   "))
+	} else {
+		hints = strings.Join([]string{
+			keyHint("↑/↓", "move"),
+			keyHint("⏎", "open"),
+			keyHint("tab", "clients"),
+			keyHint("r", "rescan"),
+			keyHint("q", "quit"),
+		}, styleDim.Render("   ·   "))
+	}
 	return styleDim.Render(strings.Repeat("─", m.width)) + "\n" + hints
 }
 

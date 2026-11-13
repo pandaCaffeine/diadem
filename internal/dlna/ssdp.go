@@ -20,6 +20,7 @@ type SSDP struct {
 	location string // description.xml URL advertised to clients
 	uuid     string // UDN, "uuid:..."
 	server   string // SERVER header value
+	observer ActivityObserver
 
 	stop    chan struct{}
 	stopped chan struct{}
@@ -33,7 +34,7 @@ const (
 
 // startSSDP binds the multicast socket, announces the server and keeps
 // re-announcing until Close.
-func startSSDP(location, uuid string) (*SSDP, error) {
+func startSSDP(location, uuid string, observer ActivityObserver) (*SSDP, error) {
 	group := &net.UDPAddr{IP: net.IPv4(239, 255, 255, 250), Port: 1900}
 	conn, err := net.ListenMulticastUDP("udp4", nil, group)
 	if err != nil {
@@ -59,6 +60,7 @@ func startSSDP(location, uuid string) (*SSDP, error) {
 		location: location,
 		uuid:     uuid,
 		server:   "Diadem/1.0 UPnP/1.0",
+		observer: observer,
 		stop:     make(chan struct{}),
 		stopped:  make(chan struct{}),
 	}
@@ -140,6 +142,10 @@ func (s *SSDP) receiveLoop() {
 			return // socket closed (normal shutdown) or dead
 		}
 		if req, ok := parseMSearch(string(buf[:n])); ok {
+			if s.observer != nil {
+				headers := parseHeaders(string(buf[:n]))
+				s.observer.ObserveSearch(src.IP.String(), headers["user-agent"])
+			}
 			go s.respond(src, req)
 		}
 	}
@@ -260,5 +266,5 @@ func buildMSearchResponse(st, usn, location, server string) string {
 // StartSSDP advertises this server on the LAN: the SSDP location and UUID
 // always match the device description this Server serves.
 func (s *Server) StartSSDP() (*SSDP, error) {
-	return startSSDP(s.cfg.BaseURL+"/description.xml", s.cfg.UUID)
+	return startSSDP(s.cfg.BaseURL+"/description.xml", s.cfg.UUID, s.cfg.Observer)
 }

@@ -16,7 +16,7 @@ const (
 	sourceProtocolInfo = "http-get:*:*:*"
 )
 
-func (s *Server) handleConnectionManager(w http.ResponseWriter, req soapRequest) {
+func (s *Server) handleConnectionManager(w http.ResponseWriter, _ *http.Request, req soapRequest) {
 	switch req.Action {
 	case "GetProtocolInfo":
 		writeSOAP(w, http.StatusOK, soapEnvelope(cmServiceURN, "GetProtocolInfo", []soapArg{

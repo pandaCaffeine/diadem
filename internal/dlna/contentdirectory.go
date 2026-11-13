@@ -31,16 +31,16 @@ const (
 	didlClose = `</DIDL-Lite>`
 )
 
-func (s *Server) handleContentDirectory(w http.ResponseWriter, req soapRequest) {
+func (s *Server) handleContentDirectory(w http.ResponseWriter, r *http.Request, req soapRequest) {
 	switch req.Action {
 	case "Browse":
-		s.actionBrowse(w, req)
+		s.actionBrowse(w, r, req)
 	default:
 		_, _ = w.Write(soapFault(w, upnpInvalidAction, "Invalid Action"))
 	}
 }
 
-func (s *Server) actionBrowse(w http.ResponseWriter, req soapRequest) {
+func (s *Server) actionBrowse(w http.ResponseWriter, r *http.Request, req soapRequest) {
 	id := strings.TrimSpace(req.Args["ObjectID"])
 	flag := strings.TrimSpace(req.Args["BrowseFlag"])
 	start, errStart := parseIndex(req.Args["StartingIndex"])
@@ -48,6 +48,10 @@ func (s *Server) actionBrowse(w http.ResponseWriter, req soapRequest) {
 	if errStart != nil || errCount != nil {
 		_, _ = w.Write(soapFault(w, upnpInvalidArgs, "Invalid Args"))
 		return
+	}
+
+	if s.cfg.Observer != nil {
+		s.cfg.Observer.ObserveBrowse(clientIP(r.RemoteAddr), r.UserAgent(), s.browseTarget(id))
 	}
 
 	switch flag {
@@ -190,6 +194,15 @@ func (s *Server) childCount(dir string) int {
 		return 0
 	}
 	return len(children)
+}
+
+// browseTarget is the human-readable name of what a Browse touched:
+// the Library itself, a Container or an Item.
+func (s *Server) browseTarget(id string) string {
+	if id == "" || id == rootObjectID {
+		return "Library"
+	}
+	return filepath.Base(id)
 }
 
 // objectPath maps an ObjectID to an absolute path inside the Library.

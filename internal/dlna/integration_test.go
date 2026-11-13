@@ -361,6 +361,50 @@ func readAll(t *testing.T, resp *http.Response) string {
 	return string(data)
 }
 
+func TestActivityObserver(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "movies"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "movies", "a.mkv"), make([]byte, 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	obs := &fakeActivityObserver{}
+	ts := httptest.NewServer(New(Config{
+		Root: dir, BaseURL: "http://127.0.0.1:1", FriendlyName: "Diadem",
+		UUID: "uuid:00000000-0000-4000-8000-000000000002", Observer: obs,
+	}))
+	t.Cleanup(ts.Close)
+
+	// A description fetch is reported.
+	resp, err := http.Get(ts.URL + "/description.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(obs.descriptions) != 1 || obs.descriptions[0].ip != "127.0.0.1" {
+		t.Errorf("descriptions = %+v", obs.descriptions)
+	}
+
+	// Browsing the root and a container both report with display targets.
+	_, body := soapBrowse(t, ts.URL, "0", "BrowseDirectChildren")
+	_ = body
+	if len(obs.browses) != 1 || obs.browses[0].target != "Library" {
+		t.Errorf("root browse = %+v, want target Library", obs.browses)
+	}
+	soapBrowse(t, ts.URL, "movies", "BrowseDirectChildren")
+	if len(obs.browses) != 2 || obs.browses[1].target != "movies" {
+		t.Errorf("container browse = %+v, want target movies", obs.browses)
+	}
+
+	// Faulted browses still count as activity (the client asked).
+	soapBrowse(t, ts.URL, "no/such", "BrowseDirectChildren")
+	if len(obs.browses) != 3 || obs.browses[2].target != "such" {
+		t.Errorf("faulted browse = %+v", obs.browses)
+	}
+}
+
 func TestNewUUIDGenerates(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 100; i++ {

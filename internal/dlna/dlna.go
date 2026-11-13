@@ -7,6 +7,7 @@ package dlna
 import (
 	"crypto/rand"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -18,6 +19,17 @@ type Config struct {
 	BaseURL      string // http://host:port — where the Library is served
 	FriendlyName string // name clients display (CONTEXT.md: Friendly Name)
 	UUID         string // full UDN "uuid:..."; generated when empty
+
+	// Observer, when set, hears about client activity (who discovered or
+	// browsed us). Satisfied structurally by clients.Tracker.
+	Observer ActivityObserver
+}
+
+// ActivityObserver reports discovery and browsing activity.
+type ActivityObserver interface {
+	ObserveSearch(ip, userAgent string)      // SSDP M-SEARCH seen
+	ObserveDescription(ip, userAgent string) // device/SCPD description fetched
+	ObserveBrowse(ip, userAgent, target string)
 }
 
 // Server serves the UPnP endpoints: device description, SCPDs and SOAP
@@ -37,11 +49,11 @@ func New(cfg Config) *Server {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/description.xml":
-		s.serveXML(w, s.description())
+		s.serveXML(w, r, s.description())
 	case "/scpd/ContentDirectory.xml":
-		s.serveXML(w, scpdContentDirectory)
+		s.serveXML(w, r, scpdContentDirectory)
 	case "/scpd/ConnectionManager.xml":
-		s.serveXML(w, scpdConnectionManager)
+		s.serveXML(w, r, scpdConnectionManager)
 	case "/ctl/ContentDirectory":
 		s.control(w, r, s.handleContentDirectory)
 	case "/ctl/ConnectionManager":
@@ -51,10 +63,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) serveXML(w http.ResponseWriter, doc string) {
+func (s *Server) serveXML(w http.ResponseWriter, r *http.Request, doc string) {
+	if s.cfg.Observer != nil {
+		s.cfg.Observer.ObserveDescription(clientIP(r.RemoteAddr), r.UserAgent())
+	}
 	w.Header().Set("Content-Type", `text/xml; charset="utf-8"`)
 	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write([]byte(doc))
+}
+
+// clientIP extracts the host part of an addr like "192.0.2.4:52341".
+func clientIP(remoteAddr string) string {
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		return host
+	}
+	return remoteAddr
 }
 
 // description renders the MediaServer:1 device description. URLBase pins

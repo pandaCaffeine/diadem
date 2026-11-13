@@ -10,6 +10,7 @@ package httpd
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,9 +19,26 @@ import (
 	"github.com/pandaCaffeine/diadem/internal/library"
 )
 
+// clientIP extracts the host part of an addr like "192.0.2.4:52341".
+func clientIP(remoteAddr string) string {
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		return host
+	}
+	return remoteAddr
+}
+
+// StreamObserver reports media file fetches: who (IP, User-Agent) is
+// pulling which file. Satisfied structurally by clients.Tracker.
+type StreamObserver interface {
+	ObserveStream(ip, userAgent, name string)
+}
+
 // Server serves the Library rooted at root over HTTP.
 type Server struct {
 	root string
+
+	// Observer, when set, is notified about every served file fetch.
+	Observer StreamObserver
 }
 
 // New builds a Server for an absolute Library path.
@@ -62,6 +80,10 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+
+	if s.Observer != nil {
+		s.Observer.ObserveStream(clientIP(r.RemoteAddr), r.UserAgent(), info.Name())
+	}
 
 	size := info.Size()
 	w.Header().Set("Accept-Ranges", "bytes")

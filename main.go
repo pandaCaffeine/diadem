@@ -15,6 +15,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/pandaCaffeine/diadem/internal/clients"
 	"github.com/pandaCaffeine/diadem/internal/dlna"
 	"github.com/pandaCaffeine/diadem/internal/httpd"
 	"github.com/pandaCaffeine/diadem/internal/tui"
@@ -62,6 +63,7 @@ func run(name, path string, port int) error {
 	// control. The advertised BaseURL must match what clients will dial.
 	// One UUID everywhere: description.xml, SSDP advertisements and
 	// M-SEARCH replies must speak in the same voice.
+	tracker := clients.NewTracker()
 	baseURL := "http://" + net.JoinHostPort(httpd.LocalIPv4(), strconv.Itoa(port))
 	uuid := dlna.NewUUID()
 	dlnaServer := dlna.New(dlna.Config{
@@ -69,10 +71,13 @@ func run(name, path string, port int) error {
 		BaseURL:      baseURL,
 		FriendlyName: name,
 		UUID:         uuid,
+		Observer:     tracker,
 	})
 
+	filesServer := httpd.New(abs)
+	filesServer.Observer = tracker
 	mux := http.NewServeMux()
-	mux.Handle("/files/", httpd.New(abs).Handler())
+	mux.Handle("/files/", filesServer.Handler())
 	mux.Handle("/", dlnaServer)
 
 	httpServer := &http.Server{Handler: mux}
@@ -84,7 +89,7 @@ func run(name, path string, port int) error {
 		return fmt.Errorf("cannot start SSDP discovery: %w", err)
 	}
 
-	program := tea.NewProgram(tui.New(name, abs, port), tea.WithAltScreen())
+	program := tea.NewProgram(tui.New(name, abs, port, tracker), tea.WithAltScreen())
 	_, err = program.Run()
 
 	byeErr := ssdp.Close() // ssdp:byebye, so clients drop us immediately

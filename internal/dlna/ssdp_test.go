@@ -108,7 +108,8 @@ func TestSSDPTargets(t *testing.T) {
 // environment has no multicast (CI containers).
 func TestSSDPLive(t *testing.T) {
 	const testUUID = "uuid:cafe1234-0000-4000-8000-000000000001"
-	s, err := startSSDP("http://127.0.0.1:59999/description.xml", testUUID)
+	obs := &fakeActivityObserver{}
+	s, err := startSSDP("http://127.0.0.1:59999/description.xml", testUUID, obs)
 	if err != nil {
 		t.Skipf("cannot bind SSDP socket: %v", err)
 	}
@@ -126,7 +127,7 @@ func TestSSDPLive(t *testing.T) {
 	}
 	defer client.Close()
 
-	search := "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: " + testUUID + "\r\n\r\n"
+	search := "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nUSER-AGENT: VLC-test/3.0\r\nST: " + testUUID + "\r\n\r\n"
 	groupAddr := &net.UDPAddr{IP: net.IPv4(239, 255, 255, 250), Port: 1900}
 	if _, err := client.WriteTo([]byte(search), groupAddr); err != nil {
 		t.Skipf("cannot send multicast: %v", err)
@@ -152,4 +153,37 @@ func TestSSDPLive(t *testing.T) {
 			t.Errorf("reply misses %q:\n%s", want, reply)
 		}
 	}
+
+	// The search itself must have been reported to the observer by the
+	// time the (delayed) reply arrived.
+	if len(obs.searches) == 0 || obs.searches[0].userAgent != "VLC-test/3.0" {
+		t.Errorf("observer searches = %+v, want one with our User-Agent", obs.searches)
+	}
+}
+
+// fakeActivityObserver records activity for tests.
+type fakeActivityObserver struct {
+	searches     []observeCall
+	descriptions []observeCall
+	browses      []browseCall
+}
+
+type observeCall struct {
+	ip, userAgent string
+}
+
+type browseCall struct {
+	ip, userAgent, target string
+}
+
+func (f *fakeActivityObserver) ObserveSearch(ip, userAgent string) {
+	f.searches = append(f.searches, observeCall{ip, userAgent})
+}
+
+func (f *fakeActivityObserver) ObserveDescription(ip, userAgent string) {
+	f.descriptions = append(f.descriptions, observeCall{ip, userAgent})
+}
+
+func (f *fakeActivityObserver) ObserveBrowse(ip, userAgent, target string) {
+	f.browses = append(f.browses, browseCall{ip, userAgent, target})
 }
