@@ -103,9 +103,12 @@ func TestSSDPTargets(t *testing.T) {
 
 // TestSSDPLive does a real SSDP round trip over multicast: start the
 // announcer, fire an M-SEARCH at the group and expect a unicast 200 OK
-// back. Skipped when the environment has no multicast (CI containers).
+// back. The search targets this instance's UUID, so other Diadems (or any
+// UPnP servers) on the same LAN cannot steal the reply. Skipped when the
+// environment has no multicast (CI containers).
 func TestSSDPLive(t *testing.T) {
-	s, err := startSSDP("http://127.0.0.1:59999/description.xml", "uuid:cafe1234-0000-4000-8000-000000000001")
+	const testUUID = "uuid:cafe1234-0000-4000-8000-000000000001"
+	s, err := startSSDP("http://127.0.0.1:59999/description.xml", testUUID)
 	if err != nil {
 		t.Skipf("cannot bind SSDP socket: %v", err)
 	}
@@ -123,7 +126,7 @@ func TestSSDPLive(t *testing.T) {
 	}
 	defer client.Close()
 
-	search := "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: urn:schemas-upnp-org:device:MediaServer:1\r\n\r\n"
+	search := "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: " + testUUID + "\r\n\r\n"
 	groupAddr := &net.UDPAddr{IP: net.IPv4(239, 255, 255, 250), Port: 1900}
 	if _, err := client.WriteTo([]byte(search), groupAddr); err != nil {
 		t.Skipf("cannot send multicast: %v", err)
@@ -139,7 +142,12 @@ func TestSSDPLive(t *testing.T) {
 		t.Skipf("no SSDP reply (multicast unavailable?): %v", err)
 	}
 	reply := string(buf[:n])
-	for _, want := range []string{"HTTP/1.1 200 OK", "LOCATION: http://127.0.0.1:59999/description.xml", "ST: urn:schemas-upnp-org:device:MediaServer:1"} {
+	for _, want := range []string{
+		"HTTP/1.1 200 OK",
+		"LOCATION: http://127.0.0.1:59999/description.xml",
+		"ST: " + testUUID,
+		"USN: " + testUUID, // UUID notifications carry the bare UUID
+	} {
 		if !strings.Contains(reply, want) {
 			t.Errorf("reply misses %q:\n%s", want, reply)
 		}
