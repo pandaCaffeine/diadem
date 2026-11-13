@@ -1,0 +1,5 @@
+# build artifact
+/diadem
+
+# macOS
+.DS_Store
