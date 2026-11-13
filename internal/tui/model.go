@@ -2,14 +2,17 @@ package tui
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/pandaCaffeine/diadem/internal/httpd"
 	"github.com/pandaCaffeine/diadem/internal/library"
 )
 
@@ -47,12 +50,16 @@ type Model struct {
 
 	popup *library.Node // Item whose details are open; nil = none
 
-	width, height int
+	host    string // primary local IPv4 clients can reach us at
+	baseURL string // http://host:port — where the Library is served
+	width   int
+	height  int
 }
 
 // New builds the model. path must be absolute.
 func New(name, path string, port int) Model {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(spinnerStyle))
+	host := httpd.LocalIPv4()
 	return Model{
 		name:     name,
 		path:     path,
@@ -60,6 +67,8 @@ func New(name, path string, port int) Model {
 		tree:     NewTreeView(nil),
 		scanning: true,
 		spinner:  sp,
+		host:     host,
+		baseURL:  "http://" + net.JoinHostPort(host, strconv.Itoa(port)),
 	}
 }
 
@@ -164,7 +173,7 @@ func (m Model) headerView() string {
 	if m.name != "Diadem" {
 		line1 += styleDim.Render(" as ") + styleTitle.Render(m.name)
 	}
-	line1 += "  " + styleDim.Render(fmt.Sprintf("%s · :%d", tildePath(m.path), m.port))
+	line1 += "  " + styleDim.Render(tildePath(m.path)+" · "+m.baseURL)
 
 	var line2 string
 	switch {
@@ -254,6 +263,7 @@ func (m Model) popupView(n *library.Node) string {
 		fmt.Sprintf("%s  %s", styleDim.Render("Kind"), n.Media),
 		fmt.Sprintf("%s  %s", styleDim.Render("Size"), humanSize(n.Size)),
 		fmt.Sprintf("%s  %s", styleDim.Render("Path"), truncate(tildePath(n.Path), 60)),
+		fmt.Sprintf("%s  %s", styleDim.Render("URL"), truncate(m.baseURL+httpd.FilePathToURL(m.path, n.Path), 60)),
 	}, "\n")
 	return popupStyle.Render(body)
 }

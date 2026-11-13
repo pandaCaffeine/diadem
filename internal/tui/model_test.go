@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,6 +17,8 @@ import (
 // would and returns the rendered view.
 func runToView(t *testing.T, m Model, keys ...string) (Model, string) {
 	t.Helper()
+	m.host = "127.0.0.1" // deterministic in tests
+	m.baseURL = "http://" + net.JoinHostPort(m.host, strconv.Itoa(m.port))
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 
@@ -53,7 +57,7 @@ func TestViewRendersLibrary(t *testing.T) {
 
 	m, view := runToView(t, New("Diadem", dir, 8200))
 	for _, want := range []string{
-		"Diadem", ":8200", // header: title and port
+		"Diadem", "http://127.0.0.1:8200", // header: title and serving URL
 		"movies",                   // container row
 		"Big Buck Bunny.mkv",       // item row
 		"bangarang.flac", "1.0 MB", // sibling item and human size
@@ -82,7 +86,10 @@ func TestNavigationAndPopup(t *testing.T) {
 
 	// rows: root, sub, a.mp4 — walk down to the item and open details.
 	m, view := runToView(t, New("Diadem", dir, 8200), "j", "j", "enter")
-	for _, want := range []string{"Kind", "video", "42 B", "a.mp4"} {
+	for _, want := range []string{
+		"Kind", "video", "42 B", "a.mp4",
+		"URL", "http://127.0.0.1:8200/files/sub/a.mp4", // fetchable URL in the popup
+	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("popup does not contain %q\nview:\n%s", want, view)
 		}

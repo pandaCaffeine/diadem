@@ -7,11 +7,14 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/pandaCaffeine/diadem/internal/httpd"
 	"github.com/pandaCaffeine/diadem/internal/tui"
 )
 
@@ -45,6 +48,16 @@ func run(name, path string, port int) error {
 	if !info.IsDir() {
 		return fmt.Errorf("%s is not a folder", abs)
 	}
+
+	// Bind the port before the TUI takes over the screen, so a busy port
+	// fails fast with a readable message instead of a silent dead server.
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return fmt.Errorf("cannot listen on port %d: %w", port, err)
+	}
+	httpServer := &http.Server{Handler: httpd.New(abs).Handler()}
+	go func() { _ = httpServer.Serve(listener) }()
+	defer func() { _ = httpServer.Close() }()
 
 	program := tea.NewProgram(tui.New(name, abs, port), tea.WithAltScreen())
 	_, err = program.Run()
