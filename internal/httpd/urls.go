@@ -20,7 +20,7 @@ func FilePathToURL(root, path string) string {
 	}
 	var b strings.Builder
 	b.WriteString("/files")
-	for _, seg := range strings.Split(rel, string(filepath.Separator)) {
+	for seg := range strings.SplitSeq(rel, string(filepath.Separator)) {
 		b.WriteString("/")
 		b.WriteString(url.PathEscape(seg))
 	}

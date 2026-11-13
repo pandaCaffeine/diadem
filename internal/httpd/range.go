@@ -34,12 +34,12 @@ func parseRange(header string, size int64) (rng httpRange, satisfiable bool, err
 	if strings.Contains(spec, ",") { // multi-range: serve the whole file instead
 		return rng, false, nil
 	}
-	dash := strings.IndexByte(spec, '-')
-	if dash < 0 {
+	before, after, ok := strings.Cut(spec, "-")
+	if !ok {
 		return rng, false, nil
 	}
-	startStr := strings.TrimSpace(spec[:dash])
-	endStr := strings.TrimSpace(spec[dash+1:])
+	startStr := strings.TrimSpace(before)
+	endStr := strings.TrimSpace(after)
 
 	if startStr == "" { // suffix form: "bytes=-N" — the last N bytes
 		n, perr := strconv.ParseInt(endStr, 10, 64)
