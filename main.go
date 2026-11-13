@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/pandaCaffeine/diadem/internal/dlna"
 	"github.com/pandaCaffeine/diadem/internal/httpd"
 	"github.com/pandaCaffeine/diadem/internal/tui"
 )
@@ -55,11 +57,40 @@ func run(name, path string, port int) error {
 	if err != nil {
 		return fmt.Errorf("cannot listen on port %d: %w", port, err)
 	}
-	httpServer := &http.Server{Handler: httpd.New(abs).Handler()}
+
+	// One mux, one port: files for media bytes, everything UPnP for
+	// control. The advertised BaseURL must match what clients will dial.
+	// One UUID everywhere: description.xml, SSDP advertisements and
+	// M-SEARCH replies must speak in the same voice.
+	baseURL := "http://" + net.JoinHostPort(httpd.LocalIPv4(), strconv.Itoa(port))
+	uuid := dlna.NewUUID()
+	dlnaServer := dlna.New(dlna.Config{
+		Root:         abs,
+		BaseURL:      baseURL,
+		FriendlyName: name,
+		UUID:         uuid,
+	})
+
+	mux := http.NewServeMux()
+	mux.Handle("/files/", httpd.New(abs).Handler())
+	mux.Handle("/", dlnaServer)
+
+	httpServer := &http.Server{Handler: mux}
 	go func() { _ = httpServer.Serve(listener) }()
-	defer func() { _ = httpServer.Close() }()
+
+	// Advertise on the LAN so clients like VLC find us without typing URLs.
+	ssdp, err := dlnaServer.StartSSDP()
+	if err != nil {
+		return fmt.Errorf("cannot start SSDP discovery: %w", err)
+	}
 
 	program := tea.NewProgram(tui.New(name, abs, port), tea.WithAltScreen())
 	_, err = program.Run()
-	return err
+
+	byeErr := ssdp.Close() // ssdp:byebye, so clients drop us immediately
+	_ = httpServer.Close()
+	if err != nil {
+		return err
+	}
+	return byeErr
 }

@@ -65,7 +65,7 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 
 	size := info.Size()
 	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Content-Type", contentType(info.Name()))
+	w.Header().Set("Content-Type", ContentType(info.Name()))
 
 	rng, satisfiable, rangeErr := parseRange(r.Header.Get("Range"), size)
 	switch {

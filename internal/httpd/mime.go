@@ -31,9 +31,10 @@ var mimeTypes = map[string]string{
 	".tiff": "image/tiff", ".webp": "image/webp",
 }
 
-// contentType returns the MIME type for a filename, falling back to a
-// binary stream for anything unknown.
-func contentType(name string) string {
+// ContentType returns the MIME type for a filename, falling back to a
+// binary stream for anything unknown. Exported for the DLNA layer, which
+// builds protocolInfo strings from the same table.
+func ContentType(name string) string {
 	if t, ok := mimeTypes[strings.ToLower(filepath.Ext(name))]; ok {
 		return t
 	}

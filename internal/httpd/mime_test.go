@@ -16,8 +16,8 @@ func TestContentType(t *testing.T) {
 		"no-extension":  "application/octet-stream",
 	}
 	for name, want := range cases {
-		if got := contentType(name); got != want {
-			t.Errorf("contentType(%q) = %q, want %q", name, got, want)
+		if got := ContentType(name); got != want {
+			t.Errorf("ContentType(%q) = %q, want %q", name, got, want)
 		}
 	}
 }
