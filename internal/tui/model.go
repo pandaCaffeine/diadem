@@ -47,6 +47,22 @@ func clientsTick() tea.Cmd {
 	})
 }
 
+// libraryChangedMsg arrives when the Watcher saw the Library change on
+// disk; the reaction is a rescan.
+type libraryChangedMsg struct{}
+
+// watchLibraryCmd blocks until the watcher reports a change, then returns
+// it as a message. Re-issued after every change to keep watching.
+func watchLibraryCmd(w *library.Watcher) tea.Cmd {
+	if w == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		<-w.Changed()
+		return libraryChangedMsg{}
+	}
+}
+
 // scannedMsg carries a library.Scan result into the TUI event loop.
 type scannedMsg struct {
 	lib *library.Library
@@ -76,6 +92,8 @@ type Model struct {
 	tab        tab
 	tracker    *clients.Tracker
 	clientRows []clients.Client
+	watcher    *library.Watcher
+	dirty      bool // change seen while a scan was already running
 
 	lib      *library.Library
 	tree     *TreeView
@@ -91,9 +109,9 @@ type Model struct {
 	height  int
 }
 
-// New builds the model. path must be absolute; tracker may be nil in tests
-// that do not exercise the Clients tab.
-func New(name, path string, port int, tracker *clients.Tracker) Model {
+// New builds the model. path must be absolute; tracker and watcher may be
+// nil in tests that do not exercise the Clients tab or live updates.
+func New(name, path string, port int, tracker *clients.Tracker, watcher *library.Watcher) Model {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(spinnerStyle))
 	host := httpd.LocalIPv4()
 	return Model{
@@ -101,6 +119,7 @@ func New(name, path string, port int, tracker *clients.Tracker) Model {
 		path:     path,
 		port:     port,
 		tracker:  tracker,
+		watcher:  watcher,
 		tree:     NewTreeView(nil),
 		scanning: true,
 		spinner:  sp,
@@ -110,7 +129,7 @@ func New(name, path string, port int, tracker *clients.Tracker) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, ScanCmd(m.path), clientsTick())
+	return tea.Batch(m.spinner.Tick, ScanCmd(m.path), clientsTick(), watchLibraryCmd(m.watcher))
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -135,7 +154,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lib = msg.lib
 			m.tree.SetRoot(msg.lib.Root)
 		}
+		if m.dirty { // a change arrived mid-scan: scan again right away
+			m.dirty = false
+			m.scanning = true
+			return m, tea.Batch(m.spinner.Tick, ScanCmd(m.path))
+		}
 		return m, nil
+
+	case libraryChangedMsg:
+		cmds := []tea.Cmd{watchLibraryCmd(m.watcher)} // keep watching either way
+		if !m.scanning {
+			m.scanning = true
+			cmds = append(cmds, m.spinner.Tick, ScanCmd(m.path))
+		} else {
+			m.dirty = true
+		}
+		return m, tea.Batch(cmds...)
 
 	case clientsTickMsg:
 		if m.tracker != nil {

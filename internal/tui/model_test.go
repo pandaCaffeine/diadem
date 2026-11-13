@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -56,7 +57,7 @@ func TestViewRendersLibrary(t *testing.T) {
 		}
 	}
 
-	m, view := runToView(t, New("Diadem", dir, 8200, nil))
+	m, view := runToView(t, New("Diadem", dir, 8200, nil, nil))
 	for _, want := range []string{
 		"Diadem", "http://127.0.0.1:8200", // header: title and serving URL
 		"movies",                   // container row
@@ -86,7 +87,7 @@ func TestNavigationAndPopup(t *testing.T) {
 	}
 
 	// rows: root, sub, a.mp4 — walk down to the item and open details.
-	m, view := runToView(t, New("Diadem", dir, 8200, nil), "j", "j", "enter")
+	m, view := runToView(t, New("Diadem", dir, 8200, nil, nil), "j", "j", "enter")
 	for _, want := range []string{
 		"Kind", "video", "42 B", "a.mp4",
 		"URL", "http://127.0.0.1:8200/files/sub/a.mp4", // fetchable URL in the popup
@@ -117,7 +118,7 @@ func TestRescanKeepsTreeUsable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "a.mkv"), make([]byte, 1), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m, _ := runToView(t, New("Diadem", dir, 8200, nil))
+	m, _ := runToView(t, New("Diadem", dir, 8200, nil, nil))
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	m = next.(Model)
@@ -145,7 +146,7 @@ func TestClientsTab(t *testing.T) {
 	}
 
 	tracker := clients.NewTracker()
-	m, view := runToView(t, New("Diadem", dir, 8200, tracker))
+	m, view := runToView(t, New("Diadem", dir, 8200, tracker, nil))
 
 	// No clients yet: the empty state shows after switching tabs.
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
@@ -174,5 +175,50 @@ func TestClientsTab(t *testing.T) {
 	m = next.(Model)
 	if !strings.Contains(m.View(), "movie.mkv") {
 		t.Error("switching back should show the library tree again")
+	}
+}
+
+func TestAutoRescanOnFileChange(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.mkv"), make([]byte, 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	watcher, err := library.NewWatcher(dir)
+	if err != nil {
+		t.Skipf("fsnotify unavailable: %v", err)
+	}
+	defer func() { _ = watcher.Close() }()
+
+	m, _ := runToView(t, New("Diadem", dir, 8200, nil, watcher))
+	if m.lib == nil || m.lib.Items != 1 {
+		t.Fatalf("initial scan: %+v", m.lib)
+	}
+
+	// A file dropped into the library while the server runs…
+	if err := os.WriteFile(filepath.Join(dir, "late-arrival.flac"), make([]byte, 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-watcher.Changed():
+	case <-time.After(3 * time.Second):
+		t.Fatal("watcher did not report the change")
+	}
+
+	// …triggers a rescan in the model…
+	next, _ := m.Update(libraryChangedMsg{})
+	m = next.(Model)
+	if !m.scanning {
+		t.Fatal("library change should trigger a rescan")
+	}
+
+	// …and the refreshed tree shows it, keeping the collapse state.
+	lib, err := library.Scan(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, _ = m.Update(scannedMsg{lib: lib})
+	m = next.(Model)
+	if m.lib.Items != 2 || !strings.Contains(m.View(), "late-arrival.flac") {
+		t.Errorf("rescan did not pick up the new file:\n%s", m.View())
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/pandaCaffeine/diadem/internal/clients"
 	"github.com/pandaCaffeine/diadem/internal/dlna"
 	"github.com/pandaCaffeine/diadem/internal/httpd"
+	"github.com/pandaCaffeine/diadem/internal/library"
 	"github.com/pandaCaffeine/diadem/internal/tui"
 )
 
@@ -89,13 +90,23 @@ func run(name, path string, port int) error {
 		return fmt.Errorf("cannot start SSDP discovery: %w", err)
 	}
 
-	program := tea.NewProgram(tui.New(name, abs, port, tracker), tea.WithAltScreen())
+	// Watch the Library tree so new files appear without a restart.
+	watcher, err := library.NewWatcher(abs)
+	if err != nil {
+		return fmt.Errorf("cannot watch %s: %w", abs, err)
+	}
+
+	program := tea.NewProgram(tui.New(name, abs, port, tracker, watcher), tea.WithAltScreen())
 	_, err = program.Run()
 
 	byeErr := ssdp.Close() // ssdp:byebye, so clients drop us immediately
 	_ = httpServer.Close()
+	watchErr := watcher.Close()
 	if err != nil {
 		return err
 	}
-	return byeErr
+	if byeErr != nil {
+		return byeErr
+	}
+	return watchErr
 }
