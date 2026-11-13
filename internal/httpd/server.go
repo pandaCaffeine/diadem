@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/pandaCaffeine/diadem/internal/library"
+	"github.com/pandaCaffeine/diadem/internal/logx"
 )
 
 // clientIP extracts the host part of an addr like "192.0.2.4:52341".
@@ -39,11 +40,15 @@ type Server struct {
 
 	// Observer, when set, is notified about every served file fetch.
 	Observer StreamObserver
+
+	// Logger receives a line per served request (and 416s). Defaults to
+	// a no-op logger.
+	Logger logx.Logger
 }
 
 // New builds a Server for an absolute Library path.
 func New(root string) *Server {
-	return &Server{root: root}
+	return &Server{root: root, Logger: logx.NopLogger{}}
 }
 
 // Handler returns the routed HTTP handler. Step 3 will mount UPnP device
@@ -85,6 +90,7 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 		s.Observer.ObserveStream(clientIP(r.RemoteAddr), r.UserAgent(), info.Name())
 	}
 
+	ip := clientIP(r.RemoteAddr)
 	size := info.Size()
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Type", ContentType(info.Name()))
@@ -92,6 +98,7 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 	rng, satisfiable, rangeErr := parseRange(r.Header.Get("Range"), size)
 	switch {
 	case rangeErr != nil:
+		s.Logger.Logf("[http] %s %s %s range=%q → 416", ip, r.Method, r.URL.Path, r.Header.Get("Range"))
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", size))
 		http.Error(w, "requested range not satisfiable", http.StatusRequestedRangeNotSatisfiable)
 		return
@@ -101,16 +108,20 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", length))
 		w.WriteHeader(http.StatusPartialContent)
 		if r.Method == http.MethodHead {
+			s.Logger.Logf("[http] %s HEAD %s → 206 %d/%dB", ip, r.URL.Path, length, size)
 			return
 		}
-		_, _ = io.Copy(w, io.NewSectionReader(f, rng.start, length))
+		n, _ := io.Copy(w, io.NewSectionReader(f, rng.start, length))
+		s.Logger.Logf("[http] %s GET %s → 206 %d/%dB", ip, r.URL.Path, n, size)
 	default: // no Range header, or malformed: send the whole file
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
 		w.WriteHeader(http.StatusOK)
 		if r.Method == http.MethodHead {
+			s.Logger.Logf("[http] %s HEAD %s → 200 %dB", ip, r.URL.Path, size)
 			return
 		}
-		_, _ = io.Copy(w, f)
+		n, _ := io.Copy(w, f)
+		s.Logger.Logf("[http] %s GET %s → 200 %dB", ip, r.URL.Path, n)
 	}
 }
 

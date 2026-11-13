@@ -36,49 +36,53 @@ func (s *Server) handleContentDirectory(w http.ResponseWriter, r *http.Request, 
 	case "Browse":
 		s.actionBrowse(w, r, req)
 	default:
+		s.cfg.Logger.Logf("[soap] %s action %q → 401", clientIP(r.RemoteAddr), req.Action)
 		_, _ = w.Write(soapFault(w, upnpInvalidAction, "Invalid Action"))
 	}
 }
 
 func (s *Server) actionBrowse(w http.ResponseWriter, r *http.Request, req soapRequest) {
+	ip := clientIP(r.RemoteAddr)
 	id := strings.TrimSpace(req.Args["ObjectID"])
 	flag := strings.TrimSpace(req.Args["BrowseFlag"])
 	start, errStart := parseIndex(req.Args["StartingIndex"])
 	count, errCount := parseIndex(req.Args["RequestedCount"])
 	if errStart != nil || errCount != nil {
+		s.cfg.Logger.Logf("[soap] %s Browse %q bad indexes → 402", ip, id)
 		_, _ = w.Write(soapFault(w, upnpInvalidArgs, "Invalid Args"))
 		return
 	}
 
 	if s.cfg.Observer != nil {
-		s.cfg.Observer.ObserveBrowse(clientIP(r.RemoteAddr), r.UserAgent(), s.browseTarget(id))
+		s.cfg.Observer.ObserveBrowse(ip, r.UserAgent(), s.browseTarget(id))
 	}
 
 	switch flag {
 	case "BrowseDirectChildren":
-		s.browseChildren(w, id, start, count)
+		s.browseChildren(w, ip, id, start, count)
 	case "BrowseMetadata":
-		s.browseMetadata(w, id)
+		s.browseMetadata(w, ip, id)
 	default:
+		s.cfg.Logger.Logf("[soap] %s Browse %q flag %q → 402", ip, id, flag)
 		_, _ = w.Write(soapFault(w, upnpInvalidArgs, "Invalid Args"))
 	}
 }
 
 // browseChildren answers BrowseDirectChildren: one page of a Container's
 // children as a DIDL-Lite document.
-func (s *Server) browseChildren(w http.ResponseWriter, id string, start, count int) {
+func (s *Server) browseChildren(w http.ResponseWriter, ip, id string, start, count int) {
 	dir, ok := s.objectPath(id)
 	if !ok {
-		_, _ = w.Write(soapFault(w, upnpNoSuchObject, "No Such Object"))
+		s.faultNoSuchObject(w, ip, id)
 		return
 	}
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		_, _ = w.Write(soapFault(w, upnpNoSuchObject, "No Such Object"))
+		s.faultNoSuchObject(w, ip, id)
 		return
 	}
 	entries, err := library.ReadContainer(dir)
 	if err != nil {
-		_, _ = w.Write(soapFault(w, upnpNoSuchObject, "No Such Object"))
+		s.faultNoSuchObject(w, ip, id)
 		return
 	}
 
@@ -92,21 +96,22 @@ func (s *Server) browseChildren(w http.ResponseWriter, id string, start, count i
 	}
 	page := entries[start:end]
 
+	s.cfg.Logger.Logf("[soap] %s browse %q → %d/%d entries", ip, s.browseTarget(id), len(page), total)
 	result := s.didlForChildren(page, objectIDOf(id))
 	s.writeBrowseResponse(w, result, len(page), total)
 }
 
 // browseMetadata answers BrowseMetadata for the root, a Container or a
 // single Item.
-func (s *Server) browseMetadata(w http.ResponseWriter, id string) {
+func (s *Server) browseMetadata(w http.ResponseWriter, ip, id string) {
 	abs, ok := s.objectPath(id)
 	if !ok {
-		_, _ = w.Write(soapFault(w, upnpNoSuchObject, "No Such Object"))
+		s.faultNoSuchObject(w, ip, id)
 		return
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
-		_, _ = w.Write(soapFault(w, upnpNoSuchObject, "No Such Object"))
+		s.faultNoSuchObject(w, ip, id)
 		return
 	}
 
@@ -125,7 +130,7 @@ func (s *Server) browseMetadata(w http.ResponseWriter, id string) {
 	default:
 		kind, isMedia := library.KindByExt(info.Name())
 		if !isMedia {
-			_, _ = w.Write(soapFault(w, upnpNoSuchObject, "No Such Object"))
+			s.faultNoSuchObject(w, ip, id)
 			return
 		}
 		entry := library.Entry{
@@ -135,7 +140,14 @@ func (s *Server) browseMetadata(w http.ResponseWriter, id string) {
 		inner = s.itemElement(entry, objectIDOf(id), parentIDOf(id))
 	}
 
+	s.cfg.Logger.Logf("[soap] %s metadata %q", ip, s.browseTarget(id))
 	s.writeBrowseResponse(w, didlDocument(inner), 1, 1)
+}
+
+// faultNoSuchObject logs and answers the common 701.
+func (s *Server) faultNoSuchObject(w http.ResponseWriter, ip, id string) {
+	s.cfg.Logger.Logf("[soap] %s browse %q → 701 no such object", ip, id)
+	_, _ = w.Write(soapFault(w, upnpNoSuchObject, "No Such Object"))
 }
 
 func (s *Server) writeBrowseResponse(w http.ResponseWriter, result string, returned, total int) {

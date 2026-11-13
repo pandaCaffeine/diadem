@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pandaCaffeine/diadem/internal/logx"
 	"golang.org/x/net/ipv4"
 )
 
@@ -21,6 +22,7 @@ type SSDP struct {
 	uuid     string // UDN, "uuid:..."
 	server   string // SERVER header value
 	observer ActivityObserver
+	logger   logx.Logger
 
 	stop    chan struct{}
 	stopped chan struct{}
@@ -34,7 +36,10 @@ const (
 
 // startSSDP binds the multicast socket, announces the server and keeps
 // re-announcing until Close.
-func startSSDP(location, uuid string, observer ActivityObserver) (*SSDP, error) {
+func startSSDP(location, uuid string, observer ActivityObserver, logger logx.Logger) (*SSDP, error) {
+	if logger == nil {
+		logger = logx.NopLogger{}
+	}
 	group := &net.UDPAddr{IP: net.IPv4(239, 255, 255, 250), Port: 1900}
 	conn, err := net.ListenMulticastUDP("udp4", nil, group)
 	if err != nil {
@@ -61,11 +66,13 @@ func startSSDP(location, uuid string, observer ActivityObserver) (*SSDP, error) 
 		uuid:     uuid,
 		server:   "Diadem/1.0 UPnP/1.0",
 		observer: observer,
+		logger:   logger,
 		stop:     make(chan struct{}),
 		stopped:  make(chan struct{}),
 	}
 	go s.receiveLoop()
 	s.alive()
+	s.logger.Logf("[ssdp] advertising %s as %s", location, uuid)
 	go s.announceLoop()
 	return s, nil
 }

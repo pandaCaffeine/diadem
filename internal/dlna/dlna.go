@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/pandaCaffeine/diadem/internal/logx"
 )
 
 // Config describes one running Diadem server.
@@ -23,6 +25,10 @@ type Config struct {
 	// Observer, when set, hears about client activity (who discovered or
 	// browsed us). Satisfied structurally by clients.Tracker.
 	Observer ActivityObserver
+
+	// Logger receives diagnostics for the Logs tab and --debug file.
+	// Defaults to a no-op logger.
+	Logger logx.Logger
 }
 
 // ActivityObserver reports discovery and browsing activity.
@@ -42,6 +48,9 @@ type Server struct {
 func New(cfg Config) *Server {
 	if cfg.UUID == "" {
 		cfg.UUID = NewUUID()
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = logx.NopLogger{}
 	}
 	return &Server{cfg: cfg}
 }
@@ -64,6 +73,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveXML(w http.ResponseWriter, r *http.Request, doc string) {
+	s.cfg.Logger.Logf("[upnp] %s fetched %s", clientIP(r.RemoteAddr), r.URL.Path)
 	if s.cfg.Observer != nil {
 		s.cfg.Observer.ObserveDescription(clientIP(r.RemoteAddr), r.UserAgent())
 	}
