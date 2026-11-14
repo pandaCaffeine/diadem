@@ -1,12 +1,13 @@
-# ♛ Diadem
+# ★ Diadem
 
-A console DLNA media server. Run it in a folder of media files and every
+A console DLNA media server named after Alpha Comae Berenices — the star
+also known as Diadem. Run it in a folder of media files and every
 DLNA client on your network — VLC on the TV in the living room, on a
 laptop, on a phone — discovers it, browses the folder tree and streams the
 files. No config, no database, no daemon: one binary, one folder.
 
 ```
-♛ Diadem  ~/Movies · http://192.168.1.5:8200
+★ Diadem  ~/Movies · http://192.168.1.5:8200
 3 folders · 42 items · 128.4 GB
 ──────────────────────────────────────────────
 ▾ Movies

@@ -142,7 +142,7 @@ func run(name, path string, port int, debug bool) error {
 		return err
 	}
 
-	fmt.Println("♛ Diadem stopped.")
+	fmt.Println("★ Diadem stopped.")
 	if logPath != "" {
 		fmt.Println("Debug log:", logPath)
 	}

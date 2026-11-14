@@ -273,7 +273,7 @@ func (m Model) treeSize() (w, h int) {
 }
 
 func (m Model) headerView() string {
-	line1 := styleCrown.Render("♛ ") + styleTitle.Render("Diadem")
+	line1 := styleStar.Render("★ ") + styleTitle.Render("Diadem")
 	if m.name != "Diadem" {
 		line1 += styleDim.Render(" as ") + styleTitle.Render(m.name)
 	}

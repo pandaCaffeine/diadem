@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	colorCrown  = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"}
+	colorStar   = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"}
 	colorTitle  = lipgloss.AdaptiveColor{Light: "#6D28D9", Dark: "#C4B5FD"}
 	colorDim    = lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#7C8394"}
 	colorFolder = lipgloss.AdaptiveColor{Light: "#0369A1", Dark: "#7DD3FC"}
@@ -21,7 +21,7 @@ var (
 )
 
 var (
-	styleCrown   = lipgloss.NewStyle().Bold(true).Foreground(colorCrown)
+	styleStar    = lipgloss.NewStyle().Bold(true).Foreground(colorStar)
 	styleTitle   = lipgloss.NewStyle().Bold(true).Foreground(colorTitle)
 	styleDim     = lipgloss.NewStyle().Foreground(colorDim)
 	styleKey     = lipgloss.NewStyle().Bold(true).Foreground(colorTitle)
