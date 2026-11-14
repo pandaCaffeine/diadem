@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/pandaCaffeine/diadem/internal/httpd"
+	"github.com/pandaCaffeine/diadem/internal/logx"
 )
 
 // The media library the integration tests browse.
@@ -402,6 +403,45 @@ func TestActivityObserver(t *testing.T) {
 	soapBrowse(t, ts.URL, "no/such", "BrowseDirectChildren")
 	if len(obs.browses) != 3 || obs.browses[2].target != "such" {
 		t.Errorf("faulted browse = %+v", obs.browses)
+	}
+}
+
+func TestLogging(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "movies"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "movies", "a.mkv"), make([]byte, 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, err := logx.New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(New(Config{
+		Root: dir, BaseURL: "http://127.0.0.1:1", FriendlyName: "Diadem",
+		UUID: "uuid:00000000-0000-4000-8000-000000000003", Logger: rec,
+	}))
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/description.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	soapBrowse(t, ts.URL, "movies", "BrowseDirectChildren")
+	soapBrowse(t, ts.URL, "gone", "BrowseDirectChildren")
+
+	lines := strings.Join(rec.Recent(), "\n")
+	for _, want := range []string{
+		"[upnp] 127.0.0.1 fetched /description.xml",
+		`[soap] 127.0.0.1 browse "movies" → 1/1 entries`,
+		`[soap] 127.0.0.1 browse "gone" → 701 no such object`,
+	} {
+		if !strings.Contains(lines, want) {
+			t.Errorf("log lines missing %q:\n%s", want, lines)
+		}
 	}
 }
 

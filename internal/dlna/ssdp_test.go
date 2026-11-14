@@ -109,7 +109,7 @@ func TestSSDPTargets(t *testing.T) {
 func TestSSDPLive(t *testing.T) {
 	const testUUID = "uuid:cafe1234-0000-4000-8000-000000000001"
 	obs := &fakeActivityObserver{}
-	s, err := startSSDP("http://127.0.0.1:59999/description.xml", testUUID, obs)
+	s, err := startSSDP("http://127.0.0.1:59999/description.xml", testUUID, obs, nil)
 	if err != nil {
 		t.Skipf("cannot bind SSDP socket: %v", err)
 	}

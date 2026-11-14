@@ -24,9 +24,28 @@ func TestFilePathToURL(t *testing.T) {
 }
 
 func TestLocalIPv4(t *testing.T) {
-	ip := net.ParseIP(LocalIPv4())
+	got := LocalIPv4()
+	ip := net.ParseIP(got)
 	if ip == nil || ip.To4() == nil {
-		t.Errorf("LocalIPv4() = %q, want a valid IPv4", LocalIPv4())
+		t.Errorf("LocalIPv4() = %q, want a valid IPv4", got)
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		t.Errorf("LocalIPv4() = %q, want a routable address", got)
+	}
+}
+
+func TestIsVirtualInterface(t *testing.T) {
+	virtual := []string{"utun9", "utun0", "tun0", "tap1", "bridge100", "veth0", "lo0", "gif0", "stf0", "awdl0", "llw0", "docker0"}
+	hardware := []string{"en0", "en1", "en10", "eth0", "wlan0"}
+	for _, name := range virtual {
+		if !isVirtualInterface(name) {
+			t.Errorf("isVirtualInterface(%q) = false, want true", name)
+		}
+	}
+	for _, name := range hardware {
+		if isVirtualInterface(name) {
+			t.Errorf("isVirtualInterface(%q) = true, want false", name)
+		}
 	}
 }
 

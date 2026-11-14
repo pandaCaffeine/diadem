@@ -84,6 +84,7 @@ func (s *SSDP) Close() error {
 	s.closeMu.Do(func() {
 		close(s.stop)
 		s.byebye()
+		s.logger.Logf("[ssdp] byebye sent")
 		err = s.conn.Close()
 		<-s.stopped
 	})
@@ -134,6 +135,7 @@ func (s *SSDP) announceLoop() {
 		select {
 		case <-ticker.C:
 			s.alive()
+			s.logger.Logf("[ssdp] alive announced to 239.255.255.250:1900")
 		case <-s.stop:
 			return
 		}
@@ -149,8 +151,9 @@ func (s *SSDP) receiveLoop() {
 			return // socket closed (normal shutdown) or dead
 		}
 		if req, ok := parseMSearch(string(buf[:n])); ok {
+			headers := parseHeaders(string(buf[:n]))
+			s.logger.Logf("[ssdp] M-SEARCH from %s ST=%s UA=%q", src.IP, req.st, headers["user-agent"])
 			if s.observer != nil {
-				headers := parseHeaders(string(buf[:n]))
 				s.observer.ObserveSearch(src.IP.String(), headers["user-agent"])
 			}
 			go s.respond(src, req)
@@ -273,5 +276,5 @@ func buildMSearchResponse(st, usn, location, server string) string {
 // StartSSDP advertises this server on the LAN: the SSDP location and UUID
 // always match the device description this Server serves.
 func (s *Server) StartSSDP() (*SSDP, error) {
-	return startSSDP(s.cfg.BaseURL+"/description.xml", s.cfg.UUID, s.cfg.Observer)
+	return startSSDP(s.cfg.BaseURL+"/description.xml", s.cfg.UUID, s.cfg.Observer, s.cfg.Logger)
 }

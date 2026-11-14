@@ -16,34 +16,28 @@ import (
 	"github.com/pandaCaffeine/diadem/internal/clients"
 	"github.com/pandaCaffeine/diadem/internal/httpd"
 	"github.com/pandaCaffeine/diadem/internal/library"
+	"github.com/pandaCaffeine/diadem/internal/logx"
 )
 
-// tab is the screen currently on display. The Logs tab arrives in a later
-// step.
+// tab is the screen currently on display.
 type tab uint8
 
 const (
 	tabLibrary tab = iota
 	tabClients
+	tabLogs
 )
 
-func (t tab) name() string {
-	if t == tabClients {
-		return "Clients"
-	}
-	return "Library"
-}
+// tickMsg refreshes time-driven views (Clients, Logs) from their sources.
+type tickMsg time.Time
 
-// clientsTickMsg refreshes the Clients list from the tracker.
-type clientsTickMsg time.Time
+const tickEvery = 500 * time.Millisecond
 
-const clientsRefreshEvery = 500 * time.Millisecond
-
-// clientsTick polls the tracker snapshot on a timer — simple and "almost
+// tick polls tracker and log snapshots on a timer — simple and "almost
 // instant" for human eyes.
-func clientsTick() tea.Cmd {
-	return tea.Tick(clientsRefreshEvery, func(t time.Time) tea.Msg {
-		return clientsTickMsg(t)
+func tick() tea.Cmd {
+	return tea.Tick(tickEvery, func(t time.Time) tea.Msg {
+		return tickMsg(t)
 	})
 }
 
@@ -69,15 +63,6 @@ type scannedMsg struct {
 	err error
 }
 
-// ScanCmd runs library.Scan off the render loop, so big folders never
-// freeze the interface.
-func ScanCmd(path string) tea.Cmd {
-	return func() tea.Msg {
-		lib, err := library.Scan(path)
-		return scannedMsg{lib: lib, err: err}
-	}
-}
-
 const (
 	headerLines = 3 // title, stats, rule
 	footerLines = 2 // rule, key hints
@@ -87,13 +72,15 @@ const (
 type Model struct {
 	name string // Friendly Name (server name, CONTEXT.md)
 	path string // absolute Library path
-	port int    // HTTP port; the server itself arrives in step 2
+	port int    // HTTP port
 
 	tab        tab
 	tracker    *clients.Tracker
 	clientRows []clients.Client
 	watcher    *library.Watcher
 	dirty      bool // change seen while a scan was already running
+	logs       *logx.Recorder
+	logFile    string // where --debug writes, shown in the Logs tab
 
 	lib      *library.Library
 	tree     *TreeView
@@ -109,27 +96,54 @@ type Model struct {
 	height  int
 }
 
-// New builds the model. path must be absolute; tracker and watcher may be
-// nil in tests that do not exercise the Clients tab or live updates.
-func New(name, path string, port int, tracker *clients.Tracker, watcher *library.Watcher) Model {
+// Options is everything the TUI needs from main.
+type Options struct {
+	Name    string // Friendly Name
+	Path    string // absolute Library path
+	Port    int
+	Tracker *clients.Tracker // nil leaves the Clients tab empty
+	Watcher *library.Watcher // nil disables live updates
+	Logs    *logx.Recorder   // nil leaves the Logs tab empty
+	LogFile string           // --debug file path, "" when off
+}
+
+// New builds the model.
+func New(opts Options) Model {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(spinnerStyle))
 	host := httpd.LocalIPv4()
 	return Model{
-		name:     name,
-		path:     path,
-		port:     port,
-		tracker:  tracker,
-		watcher:  watcher,
+		name:     opts.Name,
+		path:     opts.Path,
+		port:     opts.Port,
+		tab:      tabLibrary,
+		tracker:  opts.Tracker,
+		watcher:  opts.Watcher,
+		logs:     opts.Logs,
+		logFile:  opts.LogFile,
 		tree:     NewTreeView(nil),
 		scanning: true,
 		spinner:  sp,
 		host:     host,
-		baseURL:  "http://" + net.JoinHostPort(host, strconv.Itoa(port)),
+		baseURL:  "http://" + net.JoinHostPort(host, strconv.Itoa(opts.Port)),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, ScanCmd(m.path), clientsTick(), watchLibraryCmd(m.watcher))
+	return tea.Batch(m.spinner.Tick, m.scanCmd(), tick(), watchLibraryCmd(m.watcher))
+}
+
+// scanCmd runs library.Scan off the render loop, so big folders never
+// freeze the interface, and logs how long it took.
+func (m Model) scanCmd() tea.Cmd {
+	return func() tea.Msg {
+		start := time.Now()
+		lib, err := library.Scan(m.path)
+		if err == nil {
+			m.logs.Logf("[scan] %d items · %d folders · %s in %s",
+				lib.Items, lib.Containers, humanSize(lib.Bytes), time.Since(start).Round(time.Millisecond))
+		}
+		return scannedMsg{lib: lib, err: err}
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -157,7 +171,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.dirty { // a change arrived mid-scan: scan again right away
 			m.dirty = false
 			m.scanning = true
-			return m, tea.Batch(m.spinner.Tick, ScanCmd(m.path))
+			return m, tea.Batch(m.spinner.Tick, m.scanCmd())
 		}
 		return m, nil
 
@@ -165,17 +179,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{watchLibraryCmd(m.watcher)} // keep watching either way
 		if !m.scanning {
 			m.scanning = true
-			cmds = append(cmds, m.spinner.Tick, ScanCmd(m.path))
+			cmds = append(cmds, m.spinner.Tick, m.scanCmd())
 		} else {
 			m.dirty = true
 		}
 		return m, tea.Batch(cmds...)
 
-	case clientsTickMsg:
+	case tickMsg:
 		if m.tracker != nil {
 			m.clientRows = m.tracker.Snapshot()
 		}
-		return m, clientsTick()
+		return m, tick()
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -196,20 +210,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
 	case "tab":
-		m.tab = (m.tab + 1) % 2
+		m.tab = (m.tab + 1) % 3
 		return m, nil
 	case "shift+tab":
-		m.tab = (m.tab + 1) % 2 // two tabs: same destination either way
+		m.tab = (m.tab + 2) % 3 // back one tab
 		return m, nil
 	case "r":
 		if !m.scanning {
 			m.scanning = true
-			return m, tea.Batch(m.spinner.Tick, ScanCmd(m.path))
+			return m, tea.Batch(m.spinner.Tick, m.scanCmd())
 		}
 	}
 
 	if m.tab != tabLibrary {
-		return m, nil // the Clients list is view-only for now
+		return m, nil // Clients and Logs are view-only for now
 	}
 
 	switch msg.String() {
@@ -280,8 +294,11 @@ func (m Model) headerView() string {
 }
 
 func (m Model) bodyView() string {
-	if m.tab == tabClients {
+	switch m.tab {
+	case tabClients:
 		return m.clientsView()
+	case tabLogs:
+		return m.logsView()
 	}
 	h := m.tree.Height
 	lines := make([]string, 0, h)
@@ -294,7 +311,8 @@ func (m Model) bodyView() string {
 	case m.lib == nil:
 		lines = append(lines, m.spinner.View()+styleDim.Render(" scanning library…"))
 	case m.lib.Items == 0:
-		lines = append(lines, styleDim.Render("no media files found in the library — drop videos, music or photos into the folder"))
+		lines = append(lines, styleDim.Render(
+			"no media files found — put videos, music or photos into the folder (mkv, mp4, flac, jpg, …)"))
 	default:
 		rows := m.tree.Visible()
 		end := min(m.tree.offset+h, len(rows))
@@ -399,6 +417,28 @@ func shortUserAgent(ua string) string {
 	return token
 }
 
+// logsView renders the Logs tab: the recent activity ring, newest at the
+// bottom, auto-scrolled like a tail -f.
+func (m Model) logsView() string {
+	h := m.tree.Height
+	lines := make([]string, 0, h)
+	title := "LOGS"
+	if m.logFile != "" {
+		title += " · " + m.logFile
+	}
+	lines = append(lines, styleTitle.Render(title))
+
+	recent := m.logs.Recent() // nil-safe on a nil Recorder
+	start := max(0, len(recent)-(h-1))
+	for _, ln := range recent[start:] {
+		lines = append(lines, styleDim.Render(truncate(ln, m.tree.Width)))
+	}
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines[:h], "\n")
+}
+
 // humanAgo renders a coarse "5s ago"-style age.
 func humanAgo(t time.Time) string {
 	d := time.Since(t)
@@ -416,17 +456,17 @@ func humanAgo(t time.Time) string {
 
 func (m Model) footerView() string {
 	var hints string
-	if m.tab == tabClients {
+	if m.tab == tabLibrary {
 		hints = strings.Join([]string{
-			keyHint("tab", "library"),
+			keyHint("↑/↓", "move"),
+			keyHint("⏎", "open"),
+			keyHint("tab", "next"),
+			keyHint("r", "rescan"),
 			keyHint("q", "quit"),
 		}, styleDim.Render("   ·   "))
 	} else {
 		hints = strings.Join([]string{
-			keyHint("↑/↓", "move"),
-			keyHint("⏎", "open"),
-			keyHint("tab", "clients"),
-			keyHint("r", "rescan"),
+			keyHint("tab", "next"),
 			keyHint("q", "quit"),
 		}, styleDim.Render("   ·   "))
 	}

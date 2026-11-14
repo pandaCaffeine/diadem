@@ -13,6 +13,7 @@ import (
 
 	"github.com/pandaCaffeine/diadem/internal/clients"
 	"github.com/pandaCaffeine/diadem/internal/library"
+	"github.com/pandaCaffeine/diadem/internal/logx"
 )
 
 // runToView drives the model through resize + scan like the real program
@@ -57,7 +58,7 @@ func TestViewRendersLibrary(t *testing.T) {
 		}
 	}
 
-	m, view := runToView(t, New("Diadem", dir, 8200, nil, nil))
+	m, view := runToView(t, New(Options{Name: "Diadem", Path: dir, Port: 8200}))
 	for _, want := range []string{
 		"Diadem", "http://127.0.0.1:8200", // header: title and serving URL
 		"movies",                   // container row
@@ -87,7 +88,7 @@ func TestNavigationAndPopup(t *testing.T) {
 	}
 
 	// rows: root, sub, a.mp4 — walk down to the item and open details.
-	m, view := runToView(t, New("Diadem", dir, 8200, nil, nil), "j", "j", "enter")
+	m, view := runToView(t, New(Options{Name: "Diadem", Path: dir, Port: 8200}), "j", "j", "enter")
 	for _, want := range []string{
 		"Kind", "video", "42 B", "a.mp4",
 		"URL", "http://127.0.0.1:8200/files/sub/a.mp4", // fetchable URL in the popup
@@ -118,7 +119,7 @@ func TestRescanKeepsTreeUsable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "a.mkv"), make([]byte, 1), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m, _ := runToView(t, New("Diadem", dir, 8200, nil, nil))
+	m, _ := runToView(t, New(Options{Name: "Diadem", Path: dir, Port: 8200}))
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	m = next.(Model)
@@ -146,7 +147,7 @@ func TestClientsTab(t *testing.T) {
 	}
 
 	tracker := clients.NewTracker()
-	m, view := runToView(t, New("Diadem", dir, 8200, tracker, nil))
+	m, view := runToView(t, New(Options{Name: "Diadem", Path: dir, Port: 8200, Tracker: tracker}))
 
 	// No clients yet: the empty state shows after switching tabs.
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
@@ -161,7 +162,7 @@ func TestClientsTab(t *testing.T) {
 
 	// A client appears once activity happens and the tick fires.
 	tracker.ObserveBrowse("192.0.2.9", "VLC/3.0.21 LibVLC/3.0.21", "movies")
-	next, _ = m.Update(clientsTickMsg{})
+	next, _ = m.Update(tickMsg{})
 	m = next.(Model)
 	view = m.View()
 	for _, want := range []string{"192.0.2.9", "VLC/3.0.21", "browsing movies", "now"} {
@@ -170,11 +171,49 @@ func TestClientsTab(t *testing.T) {
 		}
 	}
 
-	// Tab toggles back to the library tree.
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	// Shift+Tab toggles back to the library tree (Tab now cycles on to Logs).
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
 	m = next.(Model)
 	if !strings.Contains(m.View(), "movie.mkv") {
 		t.Error("switching back should show the library tree again")
+	}
+}
+
+func TestLogsTab(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "movie.mkv"), make([]byte, 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logs, err := logx.New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ := runToView(t, New(Options{Name: "Diadem", Path: dir, Port: 8200, Logs: logs}))
+
+	// The scan itself logged a summary line; two tabs over, it is visible.
+	logs.Logf("[test] hello from the logger")
+	next, _ := m.Update(tickMsg{})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(Model)
+	view := m.View()
+	for _, want := range []string{"LOGS", "[test] hello from the logger"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("logs tab missing %q:\n%s", want, view)
+		}
+	}
+
+	// A scan run through the model's own command leaves a timing line.
+	cmd := m.scanCmd()
+	if msg, ok := cmd().(scannedMsg); ok && msg.err == nil {
+		next, _ := m.Update(tickMsg{})
+		m = next.(Model)
+		view = m.View()
+		if !strings.Contains(view, "[scan]") {
+			t.Errorf("logs tab missing the [scan] line:\n%s", view)
+		}
 	}
 }
 
@@ -189,7 +228,7 @@ func TestAutoRescanOnFileChange(t *testing.T) {
 	}
 	defer func() { _ = watcher.Close() }()
 
-	m, _ := runToView(t, New("Diadem", dir, 8200, nil, watcher))
+	m, _ := runToView(t, New(Options{Name: "Diadem", Path: dir, Port: 8200, Watcher: watcher}))
 	if m.lib == nil || m.lib.Items != 1 {
 		t.Fatalf("initial scan: %+v", m.lib)
 	}
