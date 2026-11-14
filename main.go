@@ -13,7 +13,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,12 +29,58 @@ import (
 	"github.com/pandaCaffeine/diadem/internal/tui"
 )
 
+// version is stamped at release time:
+//
+//	go build -ldflags "-X main.version=v0.1.0"
+//
+// Empty means a plain build; versionString picks the best fallback.
+var version string
+
+// versionString knows where each channel gets its version from: the
+// ldflags value (brew, release builds), the module version (go install
+// …@v0.1.0), or the git revision of a working-copy build.
+func versionString() string {
+	if version != "" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		// A pseudo-version (v0.0.0-…) means "no real tag" — fall through
+		// to the nicer git-revision form below.
+		if v := info.Main.Version; v != "" && v != "(devel)" && !strings.HasPrefix(v, "v0.0.0-") {
+			return v
+		}
+		var rev, dirty string
+		for _, s := range info.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				if len(s.Value) >= 7 {
+					rev = s.Value[:7]
+				}
+			case "vcs.modified":
+				if s.Value == "true" {
+					dirty = "-dirty"
+				}
+			}
+		}
+		if rev != "" {
+			return "dev-" + rev + dirty
+		}
+	}
+	return "dev"
+}
+
 func main() {
 	name := flag.String("name", "Diadem", "server name shown to clients")
 	path := flag.String("path", ".", "folder to share (default: current folder)")
 	port := flag.Int("port", 8200, "HTTP port to serve on")
 	debug := flag.Bool("debug", false, "write a verbose log to diadem.log in the temp folder")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("★ Diadem", versionString())
+		return
+	}
 
 	if err := run(*name, *path, *port, *debug); err != nil {
 		fmt.Fprintln(os.Stderr, "diadem:", err)

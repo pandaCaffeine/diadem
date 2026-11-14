@@ -48,7 +48,7 @@ go install github.com/pandaCaffeine/diadem@latest
 ## Usage
 
 ```
-diadem [--path FOLDER] [--name NAME] [--port PORT] [--debug]
+diadem [--path FOLDER] [--name NAME] [--port PORT] [--debug] [--version]
 ```
 
 | Flag | Default | What it does |
@@ -57,6 +57,7 @@ diadem [--path FOLDER] [--name NAME] [--port PORT] [--debug]
 | `--name` | `Diadem` | the server name clients display |
 | `--port` | `8200` | HTTP port for browsing and streaming |
 | `--debug` | off | write a verbose log to `diadem.log` in the temp folder |
+| `--version` | off | print the version and exit |
 
 Files are served **as they are** — no transcoding, no re-encoding. Anything
 VLC can decode, Diadem can serve: video (`mkv`, `mp4`, `avi`, …), audio
