@@ -31,18 +31,23 @@ That's it.
 
 ## Install
 
-From source (a Go toolchain is all you need):
+With Homebrew (macOS and Linux):
 
 ```
-git clone https://github.com/pandaCaffeine/diadem
-cd diadem
-go build -o /usr/local/bin/diadem .
+brew install pandaCaffeine/tap/diadem
 ```
 
-Or straight from GitHub once published:
+Or with a Go toolchain:
 
 ```
 go install github.com/pandaCaffeine/diadem@latest
+```
+
+From a checkout (for development):
+
+```
+git clone https://github.com/pandaCaffeine/diadem && cd diadem
+go build .
 ```
 
 ## Usage
@@ -112,9 +117,9 @@ go test ./...
 go vet ./...
 ```
 
-The layout follows the plan in [PLAN.md](PLAN.md): `internal/library`
+The layout follows the plan in [docs/PLAN.md](docs/PLAN.md): `internal/library`
 (scanning, watching), `internal/httpd` (file serving with byte ranges),
 `internal/dlna` (UPnP, SOAP ContentDirectory, SSDP), `internal/clients`
 (activity tracking), `internal/tui` (the interface), `internal/logx`
 (logging). Domain terms live in [CONTEXT.md](CONTEXT.md), decisions in
-[docs/adr/](docs/adr/).
+[docs/adr/](docs/adr/), deferred ideas in [docs/BACKLOG.md](docs/BACKLOG.md).
