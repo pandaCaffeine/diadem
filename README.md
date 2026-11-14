@@ -93,8 +93,14 @@ check that the TV and the computer are on the same network: guest Wi-Fi and
   the client — most only refresh on reopen.
 - **Port busy.** Another media server (minidlna, another Diadem) may hold
   port 8200 — run `diadem --port 8201`.
-- **Seeking is slow on the TV, playback is fine.** Known quirk of some TV
-  clients with byte-range requests on large files; laptops are unaffected.
+- **Seeking inside the opening is slow on the TV; everywhere else it's
+  instant.** High-bitrate rips often encode the intro with sparse keyframes:
+  a seek into it forces the player to download everything from the previous
+  keyframe to the target — tens of megabytes over Wi-Fi. This is container
+  physics, not a server problem: the same file seeks instantly after the
+  intro, and on a laptop the identical reads finish in a blink. Skipping
+  the intro in one hop (e.g. straight to 01:00) sidesteps the slow zone;
+  re-encoding the file with denser keyframes is the only real fix.
 - **"What did the TV actually ask for?"** Run with `--debug`, open the Logs
   tab or the log file, and watch SSDP/SOAP/HTTP lines scroll by.
 
