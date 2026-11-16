@@ -12,9 +12,9 @@ files. No config, no database, no daemon: one binary, one folder.
 ──────────────────────────────────────────────
 ▾ Movies
   ▾ Sci-Fi
-    🎬 Interstellar (2014).mkv                     12.8 GB
+    🎬 Interstellar (2014).mkv      2:49:00  12.8 GB
   ▾ Comedy
-    🎬 Big Buck Bunny.mkv                           1.0 GB
+    🎬 Big Buck Bunny.mkv           00:10    1.0 GB
 ──────────────────────────────────────────────
 ↑/↓ move · ⏎ open · tab next · r rescan · q quit
 ```

@@ -3,21 +3,20 @@
 Deliberately deferred ideas, with the reason and the trigger that would
 revive them.
 
-## DIDL-Lite metadata polish
+## DLNA profile in protocolInfo
 
-Advertise richer `<res>` attributes in ContentDirectory Browse responses:
+Advertise a real DLNA profile in the fourth protocolInfo field instead of
+`*`, e.g.
+`http-get:*:video/x-matroska:DLNA.ORG_PN=MATROSKA;DLNA.ORG_OP=01;DLNA.ORG_CI=0`.
 
-- `duration="H:MM:SS"` and `bitrate` — lets clients show a seek bar and
-  estimate seek targets before opening the file;
-- a real DLNA profile in the fourth protocolInfo field instead of `*`, e.g.
-  `http-get:*:video/x-matroska:DLNA.ORG_PN=MATROSKA;DLNA.ORG_OP=01;DLNA.ORG_CI=0`.
+Deferred (2026-11-14): VLC — the primary client — ignores it, and mapping
+each container/codec pair to a profile needs care. Revive if a built-in
+TV player requires it.
 
-Deferred (2026-11-14): VLC — the primary client — ignores both. It reads
-duration from the file itself, and its seeking problems turned out to be
-container physics (see below), so richer metadata would not have helped.
-Revive if a built-in TV player misbehaves. Cost: either parse mp4/mkv
-headers in-process (~150 lines) or probe via optional ffprobe — both were
-v1 non-goals.
+Note (2026-11-16): the other half of the old "DIDL-Lite metadata polish"
+entry — `res@duration`/`res@bitrate`/`dc:title` — shipped: the TUI
+duration column made the container parsers worth having (ADR-0003), and
+the attributes ride along.
 
 ## Resolved: slow seeking on TV (2026-11-14) — don't re-investigate
 
