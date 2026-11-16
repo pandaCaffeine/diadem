@@ -3,10 +3,10 @@ package dlna
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pandaCaffeine/diadem/internal/httpd"
 	"github.com/pandaCaffeine/diadem/internal/library"
@@ -69,24 +69,16 @@ func (s *Server) actionBrowse(w http.ResponseWriter, r *http.Request, req soapRe
 }
 
 // browseChildren answers BrowseDirectChildren: one page of a Container's
-// children as a DIDL-Lite document.
+// children as a DIDL-Lite document, read from the Library snapshot.
 func (s *Server) browseChildren(w http.ResponseWriter, ip, id string, start, count int) {
-	dir, ok := s.objectPath(id)
-	if !ok {
-		s.faultNoSuchObject(w, ip, id)
-		return
-	}
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		s.faultNoSuchObject(w, ip, id)
-		return
-	}
-	entries, err := library.ReadContainer(dir)
-	if err != nil {
+	node, ok := s.nodeFor(id)
+	if !ok || node.Kind != library.Container {
 		s.faultNoSuchObject(w, ip, id)
 		return
 	}
 
-	total := len(entries)
+	children := node.Children
+	total := len(children)
 	if start > total {
 		start = total
 	}
@@ -94,50 +86,31 @@ func (s *Server) browseChildren(w http.ResponseWriter, ip, id string, start, cou
 	if count > 0 && start+count < end {
 		end = start + count
 	}
-	page := entries[start:end]
+	page := children[start:end]
 
 	s.cfg.Logger.Logf("[soap] %s browse %q → %d/%d entries", ip, s.browseTarget(id), len(page), total)
-	result := s.didlForChildren(page, objectIDOf(id))
+	result := s.didlForNodes(page, objectIDOf(id))
 	s.writeBrowseResponse(w, result, len(page), total)
 }
 
 // browseMetadata answers BrowseMetadata for the root, a Container or a
 // single Item.
 func (s *Server) browseMetadata(w http.ResponseWriter, ip, id string) {
-	abs, ok := s.objectPath(id)
+	node, ok := s.nodeFor(id)
 	if !ok {
-		s.faultNoSuchObject(w, ip, id)
-		return
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
 		s.faultNoSuchObject(w, ip, id)
 		return
 	}
 
 	var inner string
-	switch {
-	case info.IsDir():
+	if node.Kind == library.Container {
 		title := s.cfg.FriendlyName
 		if oid := objectIDOf(id); oid != rootObjectID {
-			title = filepath.Base(abs)
+			title = node.Name
 		}
-		childCount := 0
-		if children, cerr := library.ReadContainer(abs); cerr == nil {
-			childCount = len(children)
-		}
-		inner = s.containerElement(objectIDOf(id), parentIDOf(id), title, childCount)
-	default:
-		kind, isMedia := library.KindByExt(info.Name())
-		if !isMedia {
-			s.faultNoSuchObject(w, ip, id)
-			return
-		}
-		entry := library.Entry{
-			Name: info.Name(), Path: abs,
-			Kind: library.Item, Media: kind, Size: info.Size(),
-		}
-		inner = s.itemElement(entry, objectIDOf(id), parentIDOf(id))
+		inner = s.containerElement(objectIDOf(id), parentIDOf(id), title, len(node.Children))
+	} else {
+		inner = s.itemElement(node, objectIDOf(id), parentIDOf(id))
 	}
 
 	s.cfg.Logger.Logf("[soap] %s metadata %q", ip, s.browseTarget(id))
@@ -159,15 +132,15 @@ func (s *Server) writeBrowseResponse(w http.ResponseWriter, result string, retur
 	}))
 }
 
-// didlForChildren renders one page of Container children.
-func (s *Server) didlForChildren(entries []library.Entry, parentID string) string {
+// didlForNodes renders one page of Container children from the tree.
+func (s *Server) didlForNodes(nodes []*library.Node, parentID string) string {
 	var inner strings.Builder
-	for _, e := range entries {
-		id := s.relID(e.Path)
-		if e.Kind == library.Container {
-			inner.WriteString(s.containerElement(id, parentID, e.Name, s.childCount(e.Path)))
+	for _, n := range nodes {
+		id := s.relID(n.Path)
+		if n.Kind == library.Container {
+			inner.WriteString(s.containerElement(id, parentID, n.Name, len(n.Children)))
 		} else {
-			inner.WriteString(s.itemElement(e, id, parentID))
+			inner.WriteString(s.itemElement(n, id, parentID))
 		}
 	}
 	return didlDocument(inner.String())
@@ -183,29 +156,48 @@ func (s *Server) containerElement(id, parentID, title string, childCount int) st
 		escString(id), escString(parentID), childCount, escString(title))
 }
 
-func (s *Server) itemElement(e library.Entry, id, parentID string) string {
+func (s *Server) itemElement(n *library.Node, id, parentID string) string {
 	class := "object.item.videoItem"
-	switch e.Media {
+	switch n.Media {
 	case library.MediaAudio:
 		class = "object.item.audioItem"
 	case library.MediaPhoto:
 		class = "object.item.imageItem"
 	}
-	protocolInfo := "http-get:*:" + httpd.ContentType(e.Name) + ":*"
-	url := s.cfg.BaseURL + httpd.FilePathToURL(s.cfg.Root, e.Path)
+	title := n.Name
+	if n.Meta.Title != "" {
+		title = n.Meta.Title // the container's own title, when muxed in
+	}
+	protocolInfo := "http-get:*:" + httpd.ContentType(n.Name) + ":*"
+	url := s.cfg.BaseURL + httpd.FilePathToURL(s.cfg.Root, n.Path)
+	resAttrs := fmt.Sprintf(`size="%d" protocolInfo="%s"`, n.Size, escString(protocolInfo))
+	if n.Meta.Duration > 0 {
+		resAttrs += fmt.Sprintf(` duration="%s"`, didlDuration(n.Meta.Duration))
+		if bps := avgBytesPerSecond(n.Size, n.Meta.Duration); bps > 0 {
+			resAttrs += fmt.Sprintf(` bitrate="%d"`, bps)
+		}
+	}
 	return fmt.Sprintf(
-		`<item id="%s" parentID="%s" restricted="1"><dc:title>%s</dc:title><upnp:class>%s</upnp:class><res size="%d" protocolInfo="%s">%s</res></item>`,
-		escString(id), escString(parentID), escString(e.Name), class, e.Size, escString(protocolInfo), escString(url))
+		`<item id="%s" parentID="%s" restricted="1"><dc:title>%s</dc:title><upnp:class>%s</upnp:class><res %s>%s</res></item>`,
+		escString(id), escString(parentID), escString(title), class, resAttrs, escString(url))
 }
 
-// childCount is the number of direct children of a Container. It re-lists
-// the folder; fine for home libraries, cacheable later if needed.
-func (s *Server) childCount(dir string) int {
-	children, err := library.ReadContainer(dir)
-	if err != nil {
+// didlDuration renders res@duration in the UPnP form H*:MM:SS: unpadded
+// hours, two-digit minutes and seconds, floored to whole seconds.
+func didlDuration(d time.Duration) string {
+	sec := int64(d / time.Second)
+	return fmt.Sprintf("%d:%02d:%02d", sec/3600, (sec%3600)/60, sec%60)
+}
+
+// avgBytesPerSecond is the average rate: file size over duration. The
+// UPnP spec counts res@bitrate in bytes/second (not bits, despite the
+// name); the containers do not store a trustworthy rate themselves.
+func avgBytesPerSecond(size int64, d time.Duration) int64 {
+	sec := int64(d / time.Second)
+	if sec < 1 || size <= 0 {
 		return 0
 	}
-	return len(children)
+	return size / sec
 }
 
 // browseTarget is the human-readable name of what a Browse touched:
@@ -217,26 +209,40 @@ func (s *Server) browseTarget(id string) string {
 	return filepath.Base(id)
 }
 
-// objectPath maps an ObjectID to an absolute path inside the Library.
-// The root (and the empty id some clients send) is the Library itself.
-func (s *Server) objectPath(id string) (string, bool) {
+// nodeFor maps an ObjectID — the root ("0", or the empty id some
+// clients send) or a slash-separated chain of Container and Item names —
+// to a Node of the current Library snapshot. The tree is the single
+// source of truth, so anything unknown or hostile (traversals, empty
+// segments) simply misses.
+func (s *Server) nodeFor(id string) (*library.Node, bool) {
+	if s.cfg.Source == nil {
+		return nil, false
+	}
+	lib := s.cfg.Source.Current()
+	if lib == nil {
+		return nil, false
+	}
 	if id == "" || id == rootObjectID {
-		return s.cfg.Root, true
+		return lib.Root, true
 	}
-	segs := strings.Split(id, "/")
-	for _, seg := range segs {
-		if seg == "" || seg == "." || seg == ".." || strings.HasPrefix(seg, ".") {
-			return "", false
+	node := lib.Root
+	for _, seg := range strings.Split(id, "/") {
+		if seg == "" {
+			return nil, false
 		}
-		if strings.ContainsAny(seg, "\\\x00") {
-			return "", false
+		var next *library.Node
+		for _, c := range node.Children {
+			if c.Name == seg {
+				next = c
+				break
+			}
 		}
+		if next == nil {
+			return nil, false
+		}
+		node = next
 	}
-	abs := filepath.Join(s.cfg.Root, filepath.Join(segs...))
-	if !strings.HasPrefix(abs, s.cfg.Root+string(filepath.Separator)) {
-		return "", false
-	}
-	return abs, true
+	return node, true
 }
 
 // relID is the ObjectID for an absolute path: its path relative to root.

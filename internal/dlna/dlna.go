@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pandaCaffeine/diadem/internal/library"
 	"github.com/pandaCaffeine/diadem/internal/logx"
 )
 
@@ -21,6 +22,12 @@ type Config struct {
 	BaseURL      string // http://host:port — where the Library is served
 	FriendlyName string // name clients display (CONTEXT.md: Friendly Name)
 	UUID         string // full UDN "uuid:..."; generated when empty
+
+	// Source owns the Library snapshot that Browse serves: the scanned
+	// tree is the single source of truth for the TUI and the DLNA
+	// ContentDirectory alike. Nil (or a Store whose first scan has not
+	// finished) answers Browse with 701.
+	Source *library.Store
 
 	// Observer, when set, hears about client activity (who discovered or
 	// browsed us). Satisfied structurally by clients.Tracker.
