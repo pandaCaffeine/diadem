@@ -5,6 +5,10 @@
 // mirrors a single media file (video, audio or photo).
 package library
 
+import (
+	"github.com/pandaCaffeine/diadem/internal/format"
+)
+
 // MediaKind classifies an Item. See CONTEXT.md.
 type MediaKind uint8
 
@@ -40,9 +44,10 @@ type Node struct {
 	Name     string // display name (base name on disk)
 	Path     string // absolute path on disk
 	Kind     NodeKind
-	Media    MediaKind // set for Items only
-	Size     int64     // set for Items only
-	Children []*Node   // set for Containers only: Containers first, then Items, natural sort
+	Media    MediaKind   // set for Items only
+	Size     int64       // set for Items only
+	Meta     format.Meta // video Items only: container title and duration
+	Children []*Node     // set for Containers only: Containers first, then Items, natural sort
 }
 
 // Library is a scan result: the tree plus aggregate stats.

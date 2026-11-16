@@ -114,6 +114,60 @@ func TestNavigationAndPopup(t *testing.T) {
 	}
 }
 
+func TestHumanDuration(t *testing.T) {
+	cases := map[time.Duration]string{
+		0:                             "--:--",
+		-1:                            "--:--",
+		42 * time.Second:              "00:00",
+		42 * time.Minute:              "00:42",
+		90 * time.Minute:              "01:30",
+		10 * time.Hour:                "10:00",
+		25*time.Hour + 13*time.Minute: "25:13",
+	}
+	for d, want := range cases {
+		if got := humanDuration(d); got != want {
+			t.Errorf("humanDuration(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestDurationColumnAndPopup(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "movie.mp4"), make([]byte, 1<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fake file cannot be probed: the column shows the placeholder.
+	m, view := runToView(t, New(Options{Name: "Diadem", Path: dir, Port: 8200}))
+	if !strings.Contains(view, "--:--") {
+		t.Errorf("view misses the --:-- placeholder:\n%s", view)
+	}
+
+	// With metadata known, the column renders HH:mm and the popup gains
+	// Duration and Bitrate lines (1 MB over an hour ≈ 291 B/s).
+	for _, c := range m.lib.Root.Children {
+		if c.Kind == library.Item {
+			c.Meta.Duration = time.Hour
+			c.Meta.Title = "The Movie"
+		}
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("enter")})
+	m = next.(Model)
+	view = m.View()
+	for _, want := range []string{
+		"01:00", // the row column…
+		"Title", "The Movie",
+		"Duration", "01:00",
+		"Bitrate", "291 B/s",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("popup misses %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestRescanKeepsTreeUsable(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a.mkv"), make([]byte, 1), 0o644); err != nil {
