@@ -87,13 +87,23 @@ func soapEnvelope(service, action string, args []soapArg) []byte {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0"?>` + "\n")
 	b.WriteString(`<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">`)
-	b.WriteString(`<s:Body><u:` + action + `Response xmlns:u="` + escString(service) + `">`)
+	b.WriteString(`<s:Body><u:`)
+	b.WriteString(action)
+	b.WriteString(`Response xmlns:u="`)
+	b.WriteString(escString(service))
+	b.WriteString(`">`)
 	for _, a := range args {
-		b.WriteString(`<` + a.Name + `>`)
+		b.WriteString(`<`)
+		b.WriteString(a.Name)
+		b.WriteString(`>`)
 		esc(&b, a.Value)
-		b.WriteString(`</` + a.Name + `>`)
+		b.WriteString(`</`)
+		b.WriteString(a.Name)
+		b.WriteString(`>`)
 	}
-	b.WriteString(`</u:` + action + `Response></s:Body></s:Envelope>`)
+	b.WriteString(`</u:`)
+	b.WriteString(action)
+	b.WriteString(`Response></s:Body></s:Envelope>`)
 	return []byte(b.String())
 }
 

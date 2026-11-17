@@ -130,15 +130,18 @@ func run(name, path string, port int, debug bool) error {
 	// One mux, one port: files for media bytes, everything UPnP for
 	// control. The advertised BaseURL must match what clients will dial.
 	// One UUID everywhere: description.xml, SSDP advertisements and
-	// M-SEARCH replies must speak in the same voice.
+	// M-SEARCH replies must speak in the same voice. One Store: the
+	// scanned Library tree feeds both the TUI and ContentDirectory.
 	tracker := clients.NewTracker()
 	baseURL := "http://" + net.JoinHostPort(httpd.LocalIPv4(), strconv.Itoa(port))
 	uuid := dlna.NewUUID()
+	store := library.NewStore(abs, logs)
 	dlnaServer := dlna.New(dlna.Config{
 		Root:         abs,
 		BaseURL:      baseURL,
 		FriendlyName: name,
 		UUID:         uuid,
+		Source:       store,
 		Observer:     tracker,
 		Logger:       logs,
 	})
@@ -170,6 +173,7 @@ func run(name, path string, port int, debug bool) error {
 		Name:    name,
 		Path:    abs,
 		Port:    port,
+		Store:   store,
 		Tracker: tracker,
 		Watcher: watcher,
 		Logs:    logs,

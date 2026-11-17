@@ -70,9 +70,10 @@ const (
 
 // Model is the root Bubble Tea model of Diadem.
 type Model struct {
-	name string // Friendly Name (server name, CONTEXT.md)
-	path string // absolute Library path
-	port int    // HTTP port
+	name  string // Friendly Name (server name, CONTEXT.md)
+	path  string // absolute Library path
+	port  int    // HTTP port
+	store *library.Store
 
 	tab        tab
 	tracker    *clients.Tracker
@@ -101,6 +102,7 @@ type Options struct {
 	Name    string // Friendly Name
 	Path    string // absolute Library path
 	Port    int
+	Store   *library.Store   // the Library snapshot owner; nil scans ad hoc
 	Tracker *clients.Tracker // nil leaves the Clients tab empty
 	Watcher *library.Watcher // nil disables live updates
 	Logs    *logx.Recorder   // nil leaves the Logs tab empty
@@ -111,10 +113,15 @@ type Options struct {
 func New(opts Options) Model {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(spinnerStyle))
 	host := httpd.LocalIPv4()
+	path := opts.Path
+	if opts.Store != nil {
+		path = opts.Store.Root()
+	}
 	return Model{
 		name:     opts.Name,
-		path:     opts.Path,
+		path:     path,
 		port:     opts.Port,
+		store:    opts.Store,
 		tab:      tabLibrary,
 		tracker:  opts.Tracker,
 		watcher:  opts.Watcher,
@@ -132,12 +139,20 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.spinner.Tick, m.scanCmd(), tick(), watchLibraryCmd(m.watcher))
 }
 
-// scanCmd runs library.Scan off the render loop, so big folders never
-// freeze the interface, and logs how long it took.
+// scanCmd runs the scan off the render loop, so big folders never
+// freeze the interface, and logs how long it took. The Store version
+// keeps the probe cache warm across rescans; the fallback without one
+// scans ad hoc (tests).
 func (m Model) scanCmd() tea.Cmd {
 	return func() tea.Msg {
 		start := time.Now()
-		lib, err := library.Scan(m.path)
+		var lib *library.Library
+		var err error
+		if m.store != nil {
+			lib, err = m.store.Scan()
+		} else {
+			lib, err = library.Scan(m.path)
+		}
 		if err == nil {
 			m.logs.Logf("[scan] %d items · %d folders · %s in %s",
 				lib.Items, lib.Containers, humanSize(lib.Bytes), time.Since(start).Round(time.Millisecond))
@@ -340,6 +355,9 @@ func (m Model) rowView(r Row, selected bool) string {
 	} else {
 		glyph := icon(r.Node.Media) + " "
 		right = humanSize(r.Node.Size)
+		if r.Node.Media == library.MediaVideo {
+			right = humanDuration(r.Node.Meta.Duration) + "  " + right
+		}
 		nameWidth := width - lipgloss.Width(indent) - lipgloss.Width(glyph) - lipgloss.Width(right) - 2
 		left = indent + glyph + kindStyle(r.Node.Media).Render(truncate(r.Node.Name, nameWidth))
 	}
@@ -478,13 +496,53 @@ func keyHint(key, desc string) string {
 }
 
 func (m Model) popupView(n *library.Node) string {
-	body := icon(n.Media) + " " + kindStyle(n.Media).Render(n.Name) + "\n\n" + strings.Join([]string{
+	lines := []string{
 		fmt.Sprintf("%s  %s", styleDim.Render("Kind"), n.Media),
+	}
+	if t := n.Meta.Title; t != "" && t != n.Name {
+		lines = append(lines, fmt.Sprintf("%s  %s", styleDim.Render("Title"), truncate(t, 60)))
+	}
+	if n.Meta.Duration > 0 {
+		lines = append(lines, fmt.Sprintf("%s  %s", styleDim.Render("Duration"), humanDuration(n.Meta.Duration)))
+		if n.Size > 0 {
+			lines = append(lines, fmt.Sprintf("%s  %s", styleDim.Render("Bitrate"), humanBitrate(n.Size, n.Meta.Duration)))
+		}
+	}
+	lines = append(lines,
 		fmt.Sprintf("%s  %s", styleDim.Render("Size"), humanSize(n.Size)),
 		fmt.Sprintf("%s  %s", styleDim.Render("Path"), truncate(tildePath(n.Path), 60)),
 		fmt.Sprintf("%s  %s", styleDim.Render("URL"), truncate(m.baseURL+httpd.FilePathToURL(m.path, n.Path), 60)),
-	}, "\n")
+	)
+	body := icon(n.Media) + " " + kindStyle(n.Media).Render(n.Name) + "\n\n" + strings.Join(lines, "\n")
 	return popupStyle.Render(body)
+}
+
+// humanDuration renders a video duration for the duration column: HH:mm
+// floored to minutes, "--:--" when unknown.
+func humanDuration(d time.Duration) string {
+	if d <= 0 {
+		return "--:--"
+	}
+	total := int(d / time.Minute)
+	h, m := total/60, total%60
+	if h > 99 {
+		h, m = 99, 59
+	}
+	return fmt.Sprintf("%02d:%02d", h, m)
+}
+
+// humanBitrate renders a file's average rate: bytes per second, in
+// humanSize units. res@bitrate in DIDL-Lite uses the same unit (the
+// UPnP spec counts bytes/second, unlike common usage).
+func humanBitrate(size int64, d time.Duration) string {
+	sec := int64(d / time.Second)
+	if sec < 1 {
+		return "0 B/s"
+	}
+	if bps := size / sec; bps > 0 {
+		return humanSize(bps) + "/s"
+	}
+	return "0 B/s"
 }
 
 // overlayPopup centers the popup over the view as a modal band.

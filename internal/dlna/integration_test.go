@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/pandaCaffeine/diadem/internal/httpd"
+	"github.com/pandaCaffeine/diadem/internal/library"
 	"github.com/pandaCaffeine/diadem/internal/logx"
 )
 
@@ -25,8 +26,9 @@ var testFiles = map[string]int{
 	".hidden/x.mkv":         1,
 }
 
-// newStack assembles the same mux main.go builds: /files/ plus the DLNA
-// endpoints, on a real listener so BaseURL is exact.
+// newStack assembles the same stack main.go builds: a Store that scans
+// the Library tree, the DLNA endpoints reading that snapshot, and the
+// /files/ handler — on a real listener so BaseURL is exact.
 func newStack(t *testing.T) (baseURL string, root string) {
 	t.Helper()
 	root = t.TempDir()
@@ -40,13 +42,21 @@ func newStack(t *testing.T) (baseURL string, root string) {
 		}
 	}
 
+	store := library.NewStore(root, nil)
+	if _, err := store.Scan(); err != nil {
+		t.Fatal(err)
+	}
+
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	baseURL = "http://" + listener.Addr().String()
 
-	dlnaServer := New(Config{Root: root, BaseURL: baseURL, FriendlyName: "Diadem", UUID: "uuid:deadbeef-0000-4000-8000-000000000000"})
+	dlnaServer := New(Config{
+		Root: root, BaseURL: baseURL, FriendlyName: "Diadem",
+		UUID: "uuid:deadbeef-0000-4000-8000-000000000000", Source: store,
+	})
 	mux := http.NewServeMux()
 	mux.Handle("/files/", httpd.New(root).Handler())
 	mux.Handle("/", dlnaServer)
@@ -372,9 +382,13 @@ func TestActivityObserver(t *testing.T) {
 	}
 
 	obs := &fakeActivityObserver{}
+	store := library.NewStore(dir, nil)
+	if _, err := store.Scan(); err != nil {
+		t.Fatal(err)
+	}
 	ts := httptest.NewServer(New(Config{
 		Root: dir, BaseURL: "http://127.0.0.1:1", FriendlyName: "Diadem",
-		UUID: "uuid:00000000-0000-4000-8000-000000000002", Observer: obs,
+		UUID: "uuid:00000000-0000-4000-8000-000000000002", Observer: obs, Source: store,
 	}))
 	t.Cleanup(ts.Close)
 
@@ -419,9 +433,13 @@ func TestLogging(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	store := library.NewStore(dir, nil)
+	if _, err := store.Scan(); err != nil {
+		t.Fatal(err)
+	}
 	ts := httptest.NewServer(New(Config{
 		Root: dir, BaseURL: "http://127.0.0.1:1", FriendlyName: "Diadem",
-		UUID: "uuid:00000000-0000-4000-8000-000000000003", Logger: rec,
+		UUID: "uuid:00000000-0000-4000-8000-000000000003", Logger: rec, Source: store,
 	}))
 	t.Cleanup(ts.Close)
 

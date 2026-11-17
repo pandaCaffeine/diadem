@@ -25,7 +25,8 @@
 
 ## Non-goals (v1)
 
-- Транскодинг, ремукс, метаданные через ffprobe (длительность, битрейт)
+- Транскодинг, ремукс
+- Метаданные через ffprobe — реализовано иначе: парсеры заголовков на чистом Go (ADR-0003)
 - Симлинки — не следуем (кандидат на v1.1, с защитой от циклов)
 - Внешние субтитры (.srt/.ass) — не показываем в дереве клиента
 - ContentDirectory Search — VLC использует только Browse
@@ -36,7 +37,8 @@
 
 Пакеты:
 
-- `internal/library` — скан файловой системы → дерево Container/Item; natural sort; watcher (fsnotify + debounce)
+- `internal/library` — скан файловой системы → дерево Container/Item; natural sort; watcher (fsnotify + debounce); Store — снапшот дерева как единый источник правды (ADR-0004)
+- `internal/format` — парсеры заголовков видео-контейнеров MP4/MKV/AVI: Metadata (ADR-0003)
 - `internal/dlna` — SSDP (UDP multicast 239.255.255.250:1900), XML-описания устройства и сервисов, SOAP ContentDirectory, генерация DIDL-Lite, таблица MIME + protocolInfo по Media Kind
 - `internal/httpd` — общий HTTP-мукс на 8200: раздача файлов (Range), описания, SOAP-эндпоинты
 - `internal/clients` — трекер клиентов и их действий (события из SSDP/HTTP)

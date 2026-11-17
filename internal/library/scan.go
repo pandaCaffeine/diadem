@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/pandaCaffeine/diadem/internal/logx"
 )
 
 // Scan walks rootPath and builds the Library tree:
@@ -17,7 +19,14 @@ import (
 //   - Containers left without any Item in their subtree are pruned.
 //
 // Children are sorted: Containers first, then natural sort by name.
+// Video Items get their container metadata (title, duration) probed; a
+// Store supplies the cross-scan probe cache via scanStore.
 func Scan(rootPath string) (*Library, error) {
+	return scanStore(rootPath, nil, nil)
+}
+
+// scanStore is Scan with the Store's probe cache and logger attached.
+func scanStore(rootPath string, cache *probeCache, logger logx.Logger) (*Library, error) {
 	abs, err := filepath.Abs(rootPath)
 	if err != nil {
 		return nil, err
@@ -85,6 +94,8 @@ func Scan(rootPath string) (*Library, error) {
 
 	prune(root)
 	sortNodes(root)
+
+	probeVideos(root, cache, logger)
 
 	lib := &Library{Root: root}
 	collect(root, lib)
