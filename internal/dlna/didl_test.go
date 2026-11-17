@@ -67,6 +67,24 @@ func TestItemElementKinds(t *testing.T) {
 	}
 }
 
+func TestDisplayTitle(t *testing.T) {
+	cases := []struct {
+		node     *library.Node
+		expected string
+	}{
+		{&library.Node{Name: "show.s05e03.name.1080p.bluray.x264.mkv"}, "S05E03 · show.s05e03.name.1080p.bluray.x264.mkv"},
+		{&library.Node{Name: "Show S1E1 Pilot.mkv"}, "S01E01 · Show S1E1 Pilot.mkv"},
+		{&library.Node{Name: "movie.2017.1080p.mkv"}, "movie.2017.1080p.mkv"},
+		{&library.Node{Name: "adventure...s05e03...mkv", Meta: format.Meta{Title: "Five More Short Graybles"}}, "S05E03 · Five More Short Graybles"},
+	}
+	for _, tc := range cases {
+		got := displayTitle(tc.node)
+		if got != tc.expected {
+			t.Errorf("displayTitle(%q) = %q, want %q", tc.node.Name, got, tc.expected)
+		}
+	}
+}
+
 func TestItemElementMetadata(t *testing.T) {
 	s := New(Config{Root: "/m", BaseURL: "http://h:1", FriendlyName: "Diadem"})
 

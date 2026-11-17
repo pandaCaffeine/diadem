@@ -156,6 +156,22 @@ func (s *Server) containerElement(id, parentID, title string, childCount int) st
 		escString(id), escString(parentID), childCount, escString(title))
 }
 
+// displayTitle is what a Client sees as the Item's name: the container's
+// own title when muxed in, else the file name; an episode code found in
+// the file name always leads, so clients sorting by title keep episode
+// order.
+func displayTitle(n *library.Node) string {
+	result := n.Name
+	if n.Meta.Title != "" {
+		result = n.Meta.Title
+	}
+
+	if code, ok := library.EpisodeCode(n.Name); ok {
+		result = code + " · " + result
+	}
+	return result
+}
+
 func (s *Server) itemElement(n *library.Node, id, parentID string) string {
 	class := "object.item.videoItem"
 	switch n.Media {
@@ -164,10 +180,9 @@ func (s *Server) itemElement(n *library.Node, id, parentID string) string {
 	case library.MediaPhoto:
 		class = "object.item.imageItem"
 	}
-	title := n.Name
-	if n.Meta.Title != "" {
-		title = n.Meta.Title // the container's own title, when muxed in
-	}
+
+	title := displayTitle(n)
+
 	protocolInfo := "http-get:*:" + httpd.ContentType(n.Name) + ":*"
 	url := s.cfg.BaseURL + httpd.FilePathToURL(s.cfg.Root, n.Path)
 	resAttrs := fmt.Sprintf(`size="%d" protocolInfo="%s"`, n.Size, escString(protocolInfo))
