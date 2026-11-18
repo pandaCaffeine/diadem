@@ -185,3 +185,48 @@ func TestNodeForAndIDs(t *testing.T) {
 		t.Errorf("parentIDOf root = %q, want -1", got)
 	}
 }
+
+func TestItemElementWatchedMarker(t *testing.T) {
+	isWatched := func(relPath string, size int64) bool {
+		return relPath == "seen.mkv" && size == 42
+	}
+	s := New(Config{Root: "/m", BaseURL: "http://h:1", FriendlyName: "Diadem", IsWatched: isWatched})
+
+	// A Watched video carries the marker suffix after the whole title —
+	// episode code included, so title sort stays in episode order.
+	seen := &library.Node{
+		Name: "show.s02e05.720p.mkv", Path: "/m/seen.mkv", Kind: library.Item,
+		Media: library.MediaVideo, Size: 42,
+	}
+	got := s.itemElement(seen, "seen.mkv", "0")
+	if !strings.Contains(got, `<dc:title>S02E05 · show.s02e05.720p.mkv · ✓</dc:title>`) {
+		t.Errorf("watched marker missing or misplaced:\n%s", got)
+	}
+
+	// An unwatched video, and a watched Item of another size, stay bare.
+	fresh := &library.Node{
+		Name: "next.s02e06.720p.mkv", Path: "/m/next.mkv", Kind: library.Item,
+		Media: library.MediaVideo, Size: 43,
+	}
+	got = s.itemElement(fresh, "next.mkv", "0")
+	if strings.Contains(got, watchedMarker) {
+		t.Errorf("unwatched video marked:\n%s", got)
+	}
+
+	// Audio never gets the mark, even when IsWatched matches.
+	track := &library.Node{
+		Name: "song.flac", Path: "/m/song.flac", Kind: library.Item,
+		Media: library.MediaAudio, Size: 42,
+	}
+	got = s.itemElement(track, "song.flac", "0")
+	if strings.Contains(got, watchedMarker) {
+		t.Errorf("audio item marked:\n%s", got)
+	}
+
+	// Without a Watch hook nothing is ever marked.
+	plain := New(Config{Root: "/m", BaseURL: "http://h:1", FriendlyName: "Diadem"})
+	got = plain.itemElement(seen, "seen.mkv", "0")
+	if strings.Contains(got, watchedMarker) {
+		t.Errorf("nil IsWatched still marked:\n%s", got)
+	}
+}

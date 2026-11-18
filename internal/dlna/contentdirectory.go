@@ -156,6 +156,13 @@ func (s *Server) containerElement(id, parentID, title string, childCount int) st
 		escString(id), escString(parentID), childCount, escString(title))
 }
 
+// watchedMarker closes the Display Title of a Watched video Item. It is
+// a suffix on purpose: Display Title exists so clients sorting by title
+// keep episode order, and a prefix on part of the episodes would break
+// it. One constant, tuned once after a real TV check (CONTEXT.md:
+// Watched).
+const watchedMarker = " · ✓"
+
 // displayTitle is what a Client sees as the Item's name: the container's
 // own title when muxed in, else the file name; an episode code found in
 // the file name always leads, so clients sorting by title keep episode
@@ -182,6 +189,9 @@ func (s *Server) itemElement(n *library.Node, id, parentID string) string {
 	}
 
 	title := displayTitle(n)
+	if n.Media == library.MediaVideo && s.cfg.IsWatched != nil && s.cfg.IsWatched(id, n.Size) {
+		title += watchedMarker
+	}
 
 	protocolInfo := "http-get:*:" + httpd.ContentType(n.Name) + ":*"
 	url := s.cfg.BaseURL + httpd.FilePathToURL(s.cfg.Root, n.Path)

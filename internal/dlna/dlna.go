@@ -33,6 +33,11 @@ type Config struct {
 	// browsed us). Satisfied structurally by clients.Tracker.
 	Observer ActivityObserver
 
+	// IsWatched, when set, reports whether a video Item carries the
+	// Watched mark; the marker joins its Display Title. Wired to
+	// watch.Tracker in main.
+	IsWatched func(relPath string, size int64) bool
+
 	// Logger receives diagnostics for the Logs tab and --debug file.
 	// Defaults to a no-op logger.
 	Logger logx.Logger
