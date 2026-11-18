@@ -16,6 +16,7 @@ type Store struct {
 	probe  *probeCache
 	logger logx.Logger
 	snap   atomic.Pointer[Library]
+	onScan func(*Library) // set once at startup, before any scan
 }
 
 // NewStore builds a Store for the Library at root. A nil logger drops
@@ -37,9 +38,18 @@ func (s *Store) Scan() (*Library, error) {
 	lib, err := scanStore(s.root, s.probe, s.logger)
 	if err == nil {
 		s.snap.Store(lib)
+		if s.onScan != nil {
+			s.onScan(lib)
+		}
 	}
 	return lib, err
 }
+
+// OnScan registers a callback invoked after every successful Scan with
+// the fresh snapshot. Diadem uses it to let the Watch State prune its
+// entries against the tree. Set it once during startup, before the TUI
+// starts rescanning.
+func (s *Store) OnScan(fn func(*Library)) { s.onScan = fn }
 
 // Current is the freshest successfully scanned snapshot, nil before the
 // first scan completes.

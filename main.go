@@ -27,6 +27,7 @@ import (
 	"github.com/pandaCaffeine/diadem/internal/library"
 	"github.com/pandaCaffeine/diadem/internal/logx"
 	"github.com/pandaCaffeine/diadem/internal/tui"
+	"github.com/pandaCaffeine/diadem/internal/watch"
 )
 
 // version is stamped at release time:
@@ -136,6 +137,15 @@ func run(name, path string, port int, debug bool) error {
 	baseURL := "http://" + net.JoinHostPort(httpd.LocalIPv4(), strconv.Itoa(port))
 	uuid := dlna.NewUUID()
 	store := library.NewStore(abs, logs)
+
+	// Watch State: which video Items have been Watched, in memory, with
+	// a JSON mirror inside the Library (.diadem/watched.json — dot files
+	// are invisible to scans and downloads). Every fresh snapshot prunes
+	// entries whose files are gone.
+	watchState := watch.New(filepath.Join(abs, ".diadem", "watched.json"), logs)
+	watchState.Load()
+	store.OnScan(func(lib *library.Library) { watchState.Prune(lib.Root) })
+
 	dlnaServer := dlna.New(dlna.Config{
 		Root:         abs,
 		BaseURL:      baseURL,
@@ -143,11 +153,13 @@ func run(name, path string, port int, debug bool) error {
 		UUID:         uuid,
 		Source:       store,
 		Observer:     tracker,
+		IsWatched:    watchState.Watched,
 		Logger:       logs,
 	})
 
 	filesServer := httpd.New(abs)
 	filesServer.Observer = tracker
+	filesServer.BytesObserver = watchState
 	filesServer.Logger = logs
 	mux := http.NewServeMux()
 	mux.Handle("/files/", filesServer.Handler())
@@ -178,6 +190,7 @@ func run(name, path string, port int, debug bool) error {
 		Watcher: watcher,
 		Logs:    logs,
 		LogFile: logPath,
+		Watch:   watchState,
 	}), tea.WithAltScreen())
 	_, err = program.Run()
 
@@ -188,6 +201,7 @@ func run(name, path string, port int, debug bool) error {
 	defer cancel()
 	_ = httpServer.Shutdown(ctx)
 	watchErr := watcher.Close()
+	flushErr := watchState.Flush() // persist the last marks before exiting
 	logs.Logf("[main] stopped")
 	closeErr := logs.Close()
 	if err != nil {
@@ -203,6 +217,9 @@ func run(name, path string, port int, debug bool) error {
 	}
 	if watchErr != nil {
 		return watchErr
+	}
+	if flushErr != nil {
+		return flushErr
 	}
 	return closeErr
 }
