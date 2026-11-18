@@ -14,6 +14,7 @@ import (
 	"github.com/pandaCaffeine/diadem/internal/clients"
 	"github.com/pandaCaffeine/diadem/internal/library"
 	"github.com/pandaCaffeine/diadem/internal/logx"
+	"github.com/pandaCaffeine/diadem/internal/watch"
 )
 
 // runToView drives the model through resize + scan like the real program
@@ -313,5 +314,98 @@ func TestAutoRescanOnFileChange(t *testing.T) {
 	m = next.(Model)
 	if m.lib.Items != 2 || !strings.Contains(m.View(), "late-arrival.flac") {
 		t.Errorf("rescan did not pick up the new file:\n%s", m.View())
+	}
+}
+
+func TestToggleWatched(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "movies"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []struct {
+		path string
+		size int
+	}{
+		{"movies/s01e01.mkv", 11},
+		{"song.flac", 12},
+	} {
+		if err := os.WriteFile(filepath.Join(dir, f.path), make([]byte, f.size), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tr := watch.New(filepath.Join(dir, ".diadem", "watched.json"), nil)
+	tr.Load()
+	m := New(Options{Path: dir, Watch: tr})
+	m.host = "127.0.0.1"
+	m.baseURL = "http://" + net.JoinHostPort(m.host, strconv.Itoa(m.port))
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	lib, err := library.Scan(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, _ = m.Update(scannedMsg{lib: lib})
+	m = next.(Model)
+
+	// Find the video and the audio Node in the scanned tree.
+	var video, audio *library.Node
+	for _, c := range lib.Root.Children {
+		if c.Kind == library.Container {
+			video = c.Children[0]
+		} else {
+			audio = c
+		}
+	}
+
+	// Audio is never marked.
+	m.toggleWatched(audio)
+	if m.isWatched(audio) {
+		t.Error("audio got marked")
+	}
+
+	m.toggleWatched(video)
+	if !m.isWatched(video) {
+		t.Fatal("video not marked by the toggle")
+	}
+	if _, view := m, m.View(); !strings.Contains(view, "✓") {
+		t.Errorf("view does not show the mark:\n%s", view)
+	}
+
+	// The mark persists and reloads under the path+size key.
+	if err := tr.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := watch.New(filepath.Join(dir, ".diadem", "watched.json"), nil)
+	reloaded.Load()
+	rel, err := filepath.Rel(dir, video.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.Watched(rel, video.Size) {
+		t.Error("mark did not persist under the path+size key")
+	}
+
+	// The `w` keypress path marks whatever the cursor sits on.
+	m.toggleWatched(video) // off again
+	if m.isWatched(video) {
+		t.Fatal("second toggle did not unmark")
+	}
+	m.tree.Move(1) // from the root onto the first child…
+	for m.tree.Current() != nil && m.tree.Current().Node != video {
+		m.tree.Move(1) // …and on until the video row
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("w")})
+	m = next.(Model)
+	if !m.isWatched(video) {
+		t.Error("`w` did not mark the item under the cursor")
+	}
+
+	// A nil tracker must not panic anywhere.
+	bare := New(Options{Path: dir})
+	bare.host, bare.baseURL = m.host, m.baseURL
+	bare.toggleWatched(video)
+	if bare.isWatched(video) {
+		t.Error("nil tracker reported a mark")
 	}
 }

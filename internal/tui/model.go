@@ -17,6 +17,7 @@ import (
 	"github.com/pandaCaffeine/diadem/internal/httpd"
 	"github.com/pandaCaffeine/diadem/internal/library"
 	"github.com/pandaCaffeine/diadem/internal/logx"
+	"github.com/pandaCaffeine/diadem/internal/watch"
 )
 
 // tab is the screen currently on display.
@@ -82,6 +83,7 @@ type Model struct {
 	dirty      bool // change seen while a scan was already running
 	logs       *logx.Recorder
 	logFile    string // where --debug writes, shown in the Logs tab
+	watch      *watch.Tracker
 
 	lib      *library.Library
 	tree     *TreeView
@@ -107,6 +109,7 @@ type Options struct {
 	Watcher *library.Watcher // nil disables live updates
 	Logs    *logx.Recorder   // nil leaves the Logs tab empty
 	LogFile string           // --debug file path, "" when off
+	Watch   *watch.Tracker   // nil leaves Items unmarked
 }
 
 // New builds the model.
@@ -127,6 +130,7 @@ func New(opts Options) Model {
 		watcher:  opts.Watcher,
 		logs:     opts.Logs,
 		logFile:  opts.LogFile,
+		watch:    opts.Watch,
 		tree:     NewTreeView(nil),
 		scanning: true,
 		spinner:  sp,
@@ -262,8 +266,37 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.popup = cur.Node
 			}
 		}
+	case "w":
+		if cur := m.tree.Current(); cur != nil {
+			m.toggleWatched(cur.Node)
+		}
 	}
 	return m, nil
+}
+
+// toggleWatched flips the Watched mark of a video Item by hand
+// (CONTEXT.md: Watched). Photos and audio are never marked.
+func (m Model) toggleWatched(n *library.Node) {
+	if m.watch == nil || n.Kind != library.Item || n.Media != library.MediaVideo || n.Size <= 0 {
+		return
+	}
+	rel, err := filepath.Rel(m.path, n.Path)
+	if err != nil {
+		return
+	}
+	m.watch.ToggleWatched(rel, n.Size)
+}
+
+// isWatched reports whether the tree should show the mark for this Node.
+func (m Model) isWatched(n *library.Node) bool {
+	if m.watch == nil || n.Kind != library.Item || n.Media != library.MediaVideo || n.Size <= 0 {
+		return false
+	}
+	rel, err := filepath.Rel(m.path, n.Path)
+	if err != nil {
+		return false
+	}
+	return m.watch.Watched(rel, n.Size)
 }
 
 func (m Model) View() string {
@@ -354,6 +387,9 @@ func (m Model) rowView(r Row, selected bool) string {
 		left = indent + arrow + styleFolder.Render(truncate(r.Node.Name, width-lipgloss.Width(indent)-2))
 	} else {
 		glyph := icon(r.Node.Media) + " "
+		if m.isWatched(r.Node) {
+			glyph = styleWatched.Render("✓") + " " // watched video: the check replaces the icon
+		}
 		right = humanSize(r.Node.Size)
 		if r.Node.Media == library.MediaVideo {
 			right = humanDuration(r.Node.Meta.Duration) + "  " + right
@@ -478,6 +514,7 @@ func (m Model) footerView() string {
 		hints = strings.Join([]string{
 			keyHint("↑/↓", "move"),
 			keyHint("⏎", "open"),
+			keyHint("w", "watched"),
 			keyHint("tab", "next"),
 			keyHint("r", "rescan"),
 			keyHint("q", "quit"),
@@ -508,6 +545,10 @@ func (m Model) popupView(n *library.Node) string {
 			lines = append(lines, fmt.Sprintf("%s  %s", styleDim.Render("Bitrate"), humanBitrate(n.Size, n.Meta.Duration)))
 		}
 	}
+	if at, ok := m.watchedAt(n); ok {
+		lines = append(lines, fmt.Sprintf("%s  %s", styleDim.Render("Watched"),
+			time.Unix(at, 0).Format("2006-01-02 15:04")))
+	}
 	lines = append(lines,
 		fmt.Sprintf("%s  %s", styleDim.Render("Size"), humanSize(n.Size)),
 		fmt.Sprintf("%s  %s", styleDim.Render("Path"), truncate(tildePath(n.Path), 60)),
@@ -515,6 +556,18 @@ func (m Model) popupView(n *library.Node) string {
 	)
 	body := icon(n.Media) + " " + kindStyle(n.Media).Render(n.Name) + "\n\n" + strings.Join(lines, "\n")
 	return popupStyle.Render(body)
+}
+
+// watchedAt reports when this Node became Watched, for the details popup.
+func (m Model) watchedAt(n *library.Node) (int64, bool) {
+	if m.watch == nil || n.Kind != library.Item || n.Media != library.MediaVideo || n.Size <= 0 {
+		return 0, false
+	}
+	rel, err := filepath.Rel(m.path, n.Path)
+	if err != nil {
+		return 0, false
+	}
+	return m.watch.MarkedAt(rel, n.Size)
 }
 
 // humanDuration renders a video duration for the duration column: HH:mm
