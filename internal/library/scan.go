@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pandaCaffeine/diadem/internal/logx"
 )
@@ -77,11 +78,13 @@ func scanStore(rootPath string, cache *probeCache, logger logx.Logger) (*Library
 				return nil
 			}
 			size := int64(0)
+			modTime := time.Time{}
 			if fi, ierr := d.Info(); ierr == nil {
 				size = fi.Size()
+				modTime = fi.ModTime()
 			}
 			parent.Children = append(parent.Children, &Node{
-				Name: d.Name(), Path: path, Kind: Item, Media: kind, Size: size,
+				Name: d.Name(), Path: path, Kind: Item, Media: kind, Size: size, ModTime: modTime,
 			})
 		default:
 			return nil // symlink, device, socket, ...

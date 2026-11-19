@@ -65,9 +65,21 @@ func readAVI(path string) (Meta, error) {
 		return Meta{Title: title}, nil // header says zero frames: unknown duration
 	}
 	meta := Meta{Title: title}
-	meta.Duration = time.Duration(totalFrames) * time.Duration(usecPerFrame) * time.Microsecond
+	// The multiplication fits uint64 ((2³²−1)² < 2⁶⁴) but the
+	// nanosecond form would overflow int64 and could wrap into a
+	// plausible lie; clamp to the same 24h ceiling probe.go trusts.
+	usec := uint64(totalFrames) * uint64(usecPerFrame)
+	if usec > uint64(maxAVIDuration/time.Microsecond) {
+		return meta, nil // over a day long: implausible, treat as unknown
+	}
+	meta.Duration = time.Duration(usec) * time.Microsecond
 	return meta, nil
 }
+
+// maxAVIDuration mirrors the plausibility ceiling of library/probe.go,
+// which format cannot import: durations past it are dropped there, so
+// they are dropped here before they can overflow.
+const maxAVIDuration = 24 * time.Hour
 
 // aviHdrl walks the hdrl list: avih carries microsec-per-frame and the
 // frame count, the odml/dmlh list carries the real count for OpenDML.

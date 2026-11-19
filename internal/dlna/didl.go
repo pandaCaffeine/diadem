@@ -72,7 +72,7 @@ func (s *Server) itemElement(n *library.Node, id, parentID string) string {
 	}
 
 	title := displayTitle(n)
-	if n.Media == library.MediaVideo && s.cfg.IsWatched != nil && s.cfg.IsWatched(watch.Key{RelPath: id, Size: n.Size}) {
+	if n.Media == library.MediaVideo && s.cfg.IsWatched != nil && s.cfg.IsWatched(watch.KeyFor(id, n)) {
 		title += watchedMarker
 	}
 

@@ -24,10 +24,18 @@ type SSDP struct {
 
 	stop    chan struct{}
 	stopped chan struct{}
-	closeMu sync.Once
+
+	responders   sync.WaitGroup // in-flight M-SEARCH responders
+	respondSlots chan struct{}  // bounds them; extra searches are dropped
+	closeMu      sync.Once
 }
 
 const ssdpAliveEvery = 30 * time.Second
+
+// respondSlotCount bounds concurrent M-SEARCH responders: an M-SEARCH
+// flood must not spawn goroutines without limit. Extra searches are
+// dropped silently — the next alive notify covers them.
+const respondSlotCount = 64
 
 // startSSDP binds the multicast socket, announces the server and keeps
 // re-announcing until Close.
@@ -55,15 +63,16 @@ func startSSDP(location, uuid string, observer ActivityObserver, logger logx.Log
 	}
 
 	s := &SSDP{
-		conn:     conn,
-		group:    group,
-		location: location,
-		uuid:     uuid,
-		server:   "Diadem/1.0 UPnP/1.0",
-		observer: observer,
-		logger:   logger,
-		stop:     make(chan struct{}),
-		stopped:  make(chan struct{}),
+		conn:         conn,
+		group:        group,
+		location:     location,
+		uuid:         uuid,
+		server:       "Diadem/1.0 UPnP/1.0",
+		observer:     observer,
+		logger:       logger,
+		stop:         make(chan struct{}),
+		stopped:      make(chan struct{}),
+		respondSlots: make(chan struct{}, respondSlotCount),
 	}
 	go s.receiveLoop()
 	s.alive()
@@ -73,7 +82,8 @@ func startSSDP(location, uuid string, observer ActivityObserver, logger logx.Log
 }
 
 // Close sends ssdp:byebye so clients drop the server from their lists
-// immediately, then shuts the socket down.
+// immediately, then shuts the socket down and waits for the in-flight
+// M-SEARCH responders (≤800 ms each) to finish.
 func (s *SSDP) Close() error {
 	var err error
 	s.closeMu.Do(func() {
@@ -82,6 +92,7 @@ func (s *SSDP) Close() error {
 		s.logger.Logf("[ssdp] byebye sent")
 		err = s.conn.Close()
 		<-s.stopped
+		s.responders.Wait()
 	})
 	return err
 }
@@ -151,7 +162,16 @@ func (s *SSDP) receiveLoop() {
 			if s.observer != nil {
 				s.observer.ObserveSearch(src.IP.String(), headers["user-agent"])
 			}
-			go s.respond(src, req)
+			select {
+			case s.respondSlots <- struct{}{}:
+				s.responders.Add(1)
+				go func() {
+					defer s.responders.Done()
+					defer func() { <-s.respondSlots }()
+					s.respond(src, req)
+				}()
+			default: // responder pool full: drop rather than pile up
+			}
 		}
 	}
 }

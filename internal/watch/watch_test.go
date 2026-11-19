@@ -117,14 +117,15 @@ func TestObserveBytesThreshold(t *testing.T) {
 	tr, _ := newTestTracker(t)
 	tr.Load()
 
-	const size = 1000
-	// watchedBytes(1000) = 300: strictly below stays unwatched.
-	tr.ObserveBytes(key("v.mkv", size), 150)
-	tr.ObserveBytes(key("v.mkv", size), 149) // 299 total
+	const size = 1000 // watchedBytes(1000) = 300 distinct bytes
+	// Overlapping replays do not double-count: 150 bytes served twice
+	// are still 150 distinct bytes.
+	tr.ObserveBytes(key("v.mkv", size), 0, 150)
+	tr.ObserveBytes(key("v.mkv", size), 0, 150)
 	if tr.Watched(key("v.mkv", size)) {
-		t.Fatal("marked below the threshold")
+		t.Fatal("overlapping ranges must not sum")
 	}
-	tr.ObserveBytes(key("v.mkv", size), 1) // 300 total — the mark
+	tr.ObserveBytes(key("v.mkv", size), 150, 150) // 300 distinct from byte 0
 	if !tr.Watched(key("v.mkv", size)) {
 		t.Fatal("not marked at the threshold")
 	}
@@ -133,15 +134,52 @@ func TestObserveBytesThreshold(t *testing.T) {
 	}
 
 	// A Watched Item stops counting; repeated pulls cannot unmark it.
-	tr.ObserveBytes(key("v.mkv", size), 10_000)
+	tr.ObserveBytes(key("v.mkv", size), 0, 10_000)
 	if !tr.Watched(key("v.mkv", size)) {
 		t.Error("a rewatch unmarked the Item")
 	}
-	// Degenerate sizes never mark.
-	tr.ObserveBytes(key("zero.mkv", 0), 5)
-	tr.ObserveBytes(key("empty.mkv", 100), 0)
+	// Degenerate reports never mark.
+	tr.ObserveBytes(key("zero.mkv", 0), 0, 5)
+	tr.ObserveBytes(key("empty.mkv", 100), 0, 0)
 	if tr.Watched(key("zero.mkv", 0)) || tr.Watched(key("empty.mkv", 100)) {
 		t.Error("degraded report marked an Item")
+	}
+}
+
+// A seek straight to the ending serves plenty of bytes, but byte 0 was
+// never among them — that is not a watched episode.
+func TestObserveBytesTailSeekDoesNotMark(t *testing.T) {
+	tr, _ := newTestTracker(t)
+	tr.Load()
+
+	tr.ObserveBytes(key("end.mkv", 1000), 600, 400) // a 40% tail: bytes enough
+	if tr.Watched(key("end.mkv", 1000)) {
+		t.Fatal("a tail-only seek must not mark")
+	}
+	// Starting playback afterwards covers byte 0, and the union of
+	// both ranges crosses the line.
+	tr.ObserveBytes(key("end.mkv", 1000), 0, 100)
+	if !tr.Watched(key("end.mkv", 1000)) {
+		t.Fatal("coverage plus a proper start should mark")
+	}
+}
+
+// The key includes the file's mtime: a same-size replacement is a
+// different file and does not inherit the mark (CONTEXT.md: Watch
+// State).
+func TestKeyModTimeSeparatesReplacements(t *testing.T) {
+	tr, _ := newTestTracker(t)
+	tr.Load()
+
+	seen := Key{RelPath: "a.mkv", Size: 100, ModTime: 1000}
+	tr.ToggleWatched(seen)
+	if !tr.Watched(seen) {
+		t.Fatal("mark missing")
+	}
+	replaced := seen
+	replaced.ModTime = 2000 // same size, new file
+	if tr.Watched(replaced) {
+		t.Fatal("a same-size replacement must not inherit the mark")
 	}
 }
 
@@ -159,11 +197,11 @@ func TestToggleUnmarkThenReearn(t *testing.T) {
 	}
 	// The counter restarted from zero: below the threshold stays
 	// unwatched, past it the mark is earned again.
-	tr.ObserveBytes(key("v.mkv", 100), 10)
+	tr.ObserveBytes(key("v.mkv", 100), 0, 10)
 	if tr.Watched(key("v.mkv", 100)) {
 		t.Fatal("marked before the threshold after unmark")
 	}
-	tr.ObserveBytes(key("v.mkv", 100), 20) // 30 of 100 = the threshold
+	tr.ObserveBytes(key("v.mkv", 100), 10, 20) // [0,30) distinct = the threshold
 	if !tr.Watched(key("v.mkv", 100)) {
 		t.Fatal("mark not earned back")
 	}
@@ -280,24 +318,45 @@ func TestPruneAgainstRealScan(t *testing.T) {
 	}
 	tr := New(filepath.Join(dir, ".diadem", "watched.json"), nil)
 	tr.Load()
-	tr.ToggleWatched(key("movies/a.mkv", 10))
-	tr.ToggleWatched(key("gone.mkv", 10))
+
+	// Marks go in under the keys a real scan derives (path, size and
+	// mtime) — the same way httpd and the TUI build them.
+	lib, err := library.Scan(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]Key{}
+	var walk func(n *library.Node)
+	walk = func(n *library.Node) {
+		if n.Kind == library.Item {
+			if rel, err := filepath.Rel(dir, n.Path); err == nil {
+				keys[rel] = KeyFor(rel, n)
+			}
+			return
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(lib.Root)
+	tr.ToggleWatched(keys["movies/a.mkv"])
+	tr.ToggleWatched(keys["gone.mkv"])
 
 	// The file leaves the disk, a rescan sees the tree without it, and
 	// the next prune forgets the mark.
 	if err := os.Remove(filepath.Join(dir, "gone.mkv")); err != nil {
 		t.Fatal(err)
 	}
-	lib, err := library.Scan(dir)
+	lib, err = library.Scan(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tr.Prune(lib.Root)
 
-	if !tr.Watched(key("movies/a.mkv", 10)) {
+	if !tr.Watched(keys["movies/a.mkv"]) {
 		t.Error("pruned an entry for a live file")
 	}
-	if tr.Watched(key("gone.mkv", 10)) {
+	if tr.Watched(keys["gone.mkv"]) {
 		t.Error("kept an entry for a deleted file")
 	}
 }

@@ -372,7 +372,7 @@ func TestToggleWatched(t *testing.T) {
 		t.Errorf("view does not show the mark:\n%s", view)
 	}
 
-	// The mark persists and reloads under the path+size key.
+	// The mark persists and reloads under the path+size+mtime key.
 	if err := tr.Flush(); err != nil {
 		t.Fatal(err)
 	}
@@ -382,8 +382,8 @@ func TestToggleWatched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reloaded.Watched(watch.Key{RelPath: rel, Size: video.Size}) {
-		t.Error("mark did not persist under the path+size key")
+	if !reloaded.Watched(watch.KeyFor(rel, video)) {
+		t.Error("mark did not persist under the path+size+mtime key")
 	}
 
 	// The `w` keypress path marks whatever the cursor sits on.

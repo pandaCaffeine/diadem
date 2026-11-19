@@ -22,12 +22,26 @@ import (
 const WatchedPercent = 30
 
 // Key identifies one media file across restarts: its path relative to
-// the Library root (the ContentDirectory ObjectID form) plus its size.
-// The size guards against a different file reusing the path: a replaced
-// or re-ripped Item starts unwatched.
+// the Library root (the ContentDirectory ObjectID form), its size and
+// its modification time. Size and mtime together guard against a
+// different file reusing the path: a replaced or re-ripped Item starts
+// unwatched, even when the replacement happens to be the same size.
 type Key struct {
 	RelPath string
 	Size    int64
+	ModTime int64 // unix seconds; 0 when unknown
+}
+
+// KeyFor derives the Watch State key of a scanned Item from its path
+// relative to the Library root. One derivation, shared by the TUI, the
+// ContentDirectory marker and Prune, so all three speak the same
+// identity.
+func KeyFor(relPath string, n *library.Node) Key {
+	k := Key{RelPath: relPath, Size: n.Size}
+	if !n.ModTime.IsZero() {
+		k.ModTime = n.ModTime.Unix()
+	}
+	return k
 }
 
 // Tracker owns the Watch State. All methods are safe for concurrent
@@ -38,10 +52,10 @@ type Tracker struct {
 	mu      sync.Mutex
 	file    string
 	logger  logx.Logger
-	watched map[Key]int64 // WatchedAt, unix seconds
-	reading map[Key]int64 // bytes pulled so far for not-yet-Watched Items
-	dirty   bool          // mirror needs a rewrite
-	timer   *time.Timer   // debounced flush; nil until first change
+	watched map[Key]int64     // WatchedAt, unix seconds
+	reading map[Key]*progress // served-byte coverage of not-yet-Watched Items
+	dirty   bool              // mirror needs a rewrite
+	timer   *time.Timer       // debounced flush; nil until first change
 }
 
 // New builds a Tracker mirroring its state into filePath (usually
@@ -54,7 +68,7 @@ func New(filePath string, logger logx.Logger) *Tracker {
 		file:    filePath,
 		logger:  logger,
 		watched: make(map[Key]int64),
-		reading: make(map[Key]int64),
+		reading: make(map[Key]*progress),
 	}
 }
 
@@ -95,12 +109,22 @@ func (t *Tracker) ToggleWatched(k Key) {
 	t.armTimerLocked()
 }
 
-// ObserveBytes reports bytes of an Item that actually reached clients —
-// summed over every request and every client on the LAN. Once the sum
-// passes the WatchedPercent line, the Item is Watched. Watched Items
-// stop counting: the counter only ever earns the mark, never loses it.
-func (t *Tracker) ObserveBytes(k Key, delivered int64) {
-	if k.Size <= 0 || delivered <= 0 {
+// ObserveBytes reports a served byte range of an Item — [start,
+// start+delivered) — merged with every range served before it, across
+// requests and clients on the LAN. Two things earn the mark: distinct
+// bytes covering the WatchedPercent share (a re-watched span never
+// counts twice), and byte 0 among them, so a seek straight to the
+// ending does not pass for a watched episode. Watched Items stop
+// counting: the counter only ever earns the mark, never loses it.
+func (t *Tracker) ObserveBytes(k Key, start, delivered int64) {
+	if k.Size <= 0 || delivered <= 0 || start < 0 {
+		return
+	}
+	lo, hi := start, start+delivered
+	if hi > k.Size {
+		hi = k.Size // a hostile or buggy report cannot cross the size
+	}
+	if lo >= hi {
 		return
 	}
 	t.mu.Lock()
@@ -108,8 +132,13 @@ func (t *Tracker) ObserveBytes(k Key, delivered int64) {
 	if _, ok := t.watched[k]; ok {
 		return
 	}
-	t.reading[k] += delivered
-	if t.reading[k] < watchedBytes(k.Size) {
+	p := t.reading[k]
+	if p == nil {
+		p = &progress{}
+		t.reading[k] = p
+	}
+	p.add(lo, hi)
+	if !p.startedAtZero() || p.covered() < watchedBytes(k.Size) {
 		return
 	}
 	delete(t.reading, k)
@@ -117,6 +146,63 @@ func (t *Tracker) ObserveBytes(k Key, delivered int64) {
 	t.logger.Logf("[watch] marked %s", k.RelPath)
 	t.dirty = true
 	t.armTimerLocked()
+}
+
+// span is a served byte range [lo, hi) of an Item.
+type span struct{ lo, hi int64 }
+
+// spanLimit caps how many disjoint spans one Item keeps: a pathological
+// client could carve thousands of gaps into the stream, and playback
+// never comes close.
+const spanLimit = 4096
+
+// progress is how much of a not-yet-Watched Item has left the server:
+// the union of served byte ranges, kept merged and sorted.
+type progress struct {
+	spans []span
+}
+
+// add merges [lo, hi) into the covered set.
+func (p *progress) add(lo, hi int64) {
+	i := 0
+	for i < len(p.spans) && p.spans[i].hi < lo { // before the new span
+		i++
+	}
+	j := i
+	for j < len(p.spans) && p.spans[j].lo <= hi { // touching or overlapping
+		if p.spans[j].lo < lo {
+			lo = p.spans[j].lo
+		}
+		if p.spans[j].hi > hi {
+			hi = p.spans[j].hi
+		}
+		j++
+	}
+	// Build fresh: writing into p.spans[:i] below would clobber the
+	// p.spans[j:] tail when j == i (a pure insert before everything).
+	out := make([]span, 0, len(p.spans)+1)
+	out = append(out, p.spans[:i]...)
+	out = append(out, span{lo, hi})
+	out = append(out, p.spans[j:]...)
+	p.spans = out
+	if len(p.spans) > spanLimit {
+		p.spans = []span{{p.spans[0].lo, p.spans[len(p.spans)-1].hi}}
+	}
+}
+
+// covered is the count of distinct bytes served so far.
+func (p *progress) covered() int64 {
+	var n int64
+	for _, s := range p.spans {
+		n += s.hi - s.lo
+	}
+	return n
+}
+
+// startedAtZero reports whether byte 0 was ever served: playback that
+// begins with a seek must not earn the mark.
+func (p *progress) startedAtZero() bool {
+	return len(p.spans) > 0 && p.spans[0].lo == 0
 }
 
 // watchedBytes is the byte count that earns the mark: a plain integer
@@ -127,9 +213,10 @@ func watchedBytes(size int64) int64 {
 
 // Prune drops entries whose file is gone from the Library. An entry
 // dies only when its parent Container is present in the fresh snapshot
-// while an Item with the same path and size is not — so a renamed,
-// deleted or replaced file forgets its mark, but a whole missing region
-// of the tree (an unplugged drive, a flaky mount) keeps its entries.
+// while an Item with the same path, size and mtime is not — so a
+// renamed, deleted or replaced file forgets its mark, but a whole
+// missing region of the tree (an unplugged drive, a flaky mount) keeps
+// its entries.
 func (t *Tracker) Prune(root *library.Node) {
 	if root == nil {
 		return
@@ -144,7 +231,7 @@ func (t *Tracker) Prune(root *library.Node) {
 			return
 		}
 		if n.Kind == library.Item {
-			items[Key{RelPath: rel, Size: n.Size}] = true
+			items[KeyFor(rel, n)] = true
 			return
 		}
 		dirs[rel] = true

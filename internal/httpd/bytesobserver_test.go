@@ -19,11 +19,12 @@ type fakeBytesObserver struct {
 
 type bytesCall struct {
 	k         watch.Key
+	start     int64
 	delivered int64
 }
 
-func (f *fakeBytesObserver) ObserveBytes(k watch.Key, delivered int64) {
-	f.calls = append(f.calls, bytesCall{k, delivered})
+func (f *fakeBytesObserver) ObserveBytes(k watch.Key, start, delivered int64) {
+	f.calls = append(f.calls, bytesCall{k, start, delivered})
 }
 
 func newBytesServer(t *testing.T, name string, size int) (*Server, *fakeBytesObserver, *httptest.Server) {
@@ -60,9 +61,9 @@ func TestObserveBytesRangeAndFull(t *testing.T) {
 		t.Errorf("call = %+v", c)
 	}
 
-	// A second, ranged GET adds its slice to the report.
+	// A second, ranged GET reports its slice with the offset it served.
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/files/clip.mp4", nil)
-	req.Header.Set("Range", "bytes=0-3")
+	req.Header.Set("Range", "bytes=4-7")
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -71,8 +72,8 @@ func TestObserveBytesRangeAndFull(t *testing.T) {
 	if len(obs.calls) != 2 {
 		t.Fatalf("observer calls = %d, want 2", len(obs.calls))
 	}
-	if c := obs.calls[1]; c.delivered != 4 {
-		t.Errorf("ranged call = %+v, want delivered 4", c)
+	if c := obs.calls[1]; c.start != 4 || c.delivered != 4 {
+		t.Errorf("ranged call = %+v, want start 4 delivered 4", c)
 	}
 }
 

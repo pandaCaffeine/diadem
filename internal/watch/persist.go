@@ -10,7 +10,10 @@ import (
 )
 
 // formatVersion guards the state file against future format changes.
-const formatVersion = 1
+// Version 2 added the mtime to each entry: a v1 mirror (path+size keys)
+// starts empty once and rewrites itself — the old keys cannot be
+// trusted to name the same files.
+const formatVersion = 2
 
 // flushDelay is how long a change waits before it reaches the disk —
 // playback produces a burst of byte reports and a burst of marks would
@@ -21,6 +24,7 @@ const flushDelay = 2 * time.Second
 type Entry struct {
 	Path      string `json:"path"`
 	Size      int64  `json:"size"`
+	ModTime   int64  `json:"mtime"`      // unix seconds, 0 when unknown
 	WatchedAt int64  `json:"watched_at"` // unix seconds
 }
 
@@ -67,7 +71,7 @@ func (t *Tracker) Load() {
 		if e.Path == "" || e.Size <= 0 {
 			continue
 		}
-		t.watched[Key{RelPath: e.Path, Size: e.Size}] = e.WatchedAt
+		t.watched[Key{RelPath: e.Path, Size: e.Size, ModTime: e.ModTime}] = e.WatchedAt
 	}
 	t.logger.Logf("[watch] loaded %d watched entries", len(t.watched))
 }
@@ -80,15 +84,16 @@ func (t *Tracker) Flush() error {
 	return t.saveLocked()
 }
 
-// saveLocked rewrites the mirror atomically: full temp file, then a
-// rename, so a crash never leaves a half-written state behind.
+// saveLocked rewrites the mirror durably: a full temp file fsynced to
+// disk, then a rename, then a directory fsync — a crash can neither
+// publish a half-written state nor lose an already-published one.
 func (t *Tracker) saveLocked() error {
 	if !t.dirty {
 		return nil
 	}
 	entries := make([]Entry, 0, len(t.watched))
 	for k, at := range t.watched {
-		entries = append(entries, Entry{Path: k.RelPath, Size: k.Size, WatchedAt: at})
+		entries = append(entries, Entry{Path: k.RelPath, Size: k.Size, ModTime: k.ModTime, WatchedAt: at})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
 	data, err := json.MarshalIndent(stateFile{Version: formatVersion, Entries: entries}, "", "  ")
@@ -100,15 +105,45 @@ func (t *Tracker) saveLocked() error {
 		return err
 	}
 	tmp := t.file + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := writeFileSync(tmp, data, 0o644); err != nil {
 		return err
 	}
 	if err := os.Rename(tmp, t.file); err != nil {
 		return err
 	}
+	syncDir(dir) // best effort: make the rename itself durable
 	t.dirty = false
 	t.logger.Logf("[watch] saved %d entries", len(entries))
 	return nil
+}
+
+// writeFileSync writes and fsyncs: once it returns, the bytes are on
+// disk, so the rename on top can never publish a short file.
+func writeFileSync(path string, data []byte, mode os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// syncDir fsyncs a directory — the same trick databases use to make a
+// rename survive a crash. Best effort: some filesystems refuse it.
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	_ = d.Close()
 }
 
 // armTimerLocked (re)starts the debounced flush. Called with t.mu held.

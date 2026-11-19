@@ -232,8 +232,8 @@ func (m Model) isWatched(n *library.Node) bool {
 }
 
 // watchKey maps a Node to its Watch State key (CONTEXT.md: Watched):
-// only video Items with a known size can carry the mark, addressed as
-// the path relative to the Library root plus the file size.
+// only video Items with a known size can carry the mark. Derivation is
+// watch.KeyFor, shared with the ContentDirectory marker and Prune.
 func (m Model) watchKey(n *library.Node) (watch.Key, bool) {
 	if m.watch == nil || n.Kind != library.Item || n.Media != library.MediaVideo || n.Size <= 0 {
 		return watch.Key{}, false
@@ -242,7 +242,7 @@ func (m Model) watchKey(n *library.Node) (watch.Key, bool) {
 	if err != nil {
 		return watch.Key{}, false
 	}
-	return watch.Key{RelPath: rel, Size: n.Size}, true
+	return watch.KeyFor(rel, n), true
 }
 
 func (m Model) View() string {

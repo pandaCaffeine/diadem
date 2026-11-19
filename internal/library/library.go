@@ -6,6 +6,8 @@
 package library
 
 import (
+	"time"
+
 	"github.com/pandaCaffeine/diadem/internal/format"
 )
 
@@ -46,6 +48,7 @@ type Node struct {
 	Kind     NodeKind
 	Media    MediaKind   // set for Items only
 	Size     int64       // set for Items only
+	ModTime  time.Time   // set for Items only: replacement detection (Watch State key)
 	Meta     format.Meta // video Items only: container title and duration
 	Children []*Node     // set for Containers only: Containers first, then Items, natural sort
 }
