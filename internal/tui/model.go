@@ -215,26 +215,34 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // toggleWatched flips the Watched mark of a video Item by hand
 // (CONTEXT.md: Watched). Photos and audio are never marked.
 func (m Model) toggleWatched(n *library.Node) {
-	if m.watch == nil || n.Kind != library.Item || n.Media != library.MediaVideo || n.Size <= 0 {
+	k, ok := m.watchKey(n)
+	if !ok {
 		return
 	}
-	rel, err := filepath.Rel(m.path, n.Path)
-	if err != nil {
-		return
-	}
-	m.watch.ToggleWatched(rel, n.Size)
+	m.watch.ToggleWatched(k.RelPath, k.Size)
 }
 
 // isWatched reports whether the tree should show the mark for this Node.
 func (m Model) isWatched(n *library.Node) bool {
-	if m.watch == nil || n.Kind != library.Item || n.Media != library.MediaVideo || n.Size <= 0 {
+	k, ok := m.watchKey(n)
+	if !ok {
 		return false
+	}
+	return m.watch.Watched(k.RelPath, k.Size)
+}
+
+// watchKey maps a Node to its Watch State key (CONTEXT.md: Watched):
+// only video Items with a known size can carry the mark, addressed as
+// the path relative to the Library root plus the file size.
+func (m Model) watchKey(n *library.Node) (watch.Key, bool) {
+	if m.watch == nil || n.Kind != library.Item || n.Media != library.MediaVideo || n.Size <= 0 {
+		return watch.Key{}, false
 	}
 	rel, err := filepath.Rel(m.path, n.Path)
 	if err != nil {
-		return false
+		return watch.Key{}, false
 	}
-	return m.watch.Watched(rel, n.Size)
+	return watch.Key{RelPath: rel, Size: n.Size}, true
 }
 
 func (m Model) View() string {

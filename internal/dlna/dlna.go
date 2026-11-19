@@ -7,11 +7,11 @@ package dlna
 import (
 	"crypto/rand"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/pandaCaffeine/diadem/internal/httpd"
 	"github.com/pandaCaffeine/diadem/internal/library"
 	"github.com/pandaCaffeine/diadem/internal/logx"
 )
@@ -85,21 +85,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveXML(w http.ResponseWriter, r *http.Request, doc string) {
-	s.cfg.Logger.Logf("[upnp] %s fetched %s", clientIP(r.RemoteAddr), r.URL.Path)
+	s.cfg.Logger.Logf("[upnp] %s fetched %s", httpd.ClientIP(r.RemoteAddr), r.URL.Path)
 	if s.cfg.Observer != nil {
-		s.cfg.Observer.ObserveDescription(clientIP(r.RemoteAddr), r.UserAgent())
+		s.cfg.Observer.ObserveDescription(httpd.ClientIP(r.RemoteAddr), r.UserAgent())
 	}
 	w.Header().Set("Content-Type", `text/xml; charset="utf-8"`)
 	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write([]byte(doc))
-}
-
-// clientIP extracts the host part of an addr like "192.0.2.4:52341".
-func clientIP(remoteAddr string) string {
-	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
-		return host
-	}
-	return remoteAddr
 }
 
 // description renders the MediaServer:1 device description. URLBase pins

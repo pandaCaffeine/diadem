@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pandaCaffeine/diadem/internal/httpd"
 	"github.com/pandaCaffeine/diadem/internal/library"
 )
 
@@ -22,13 +23,13 @@ func (s *Server) handleContentDirectory(w http.ResponseWriter, r *http.Request, 
 	case "Browse":
 		s.actionBrowse(w, r, req)
 	default:
-		s.cfg.Logger.Logf("[soap] %s action %q → 401", clientIP(r.RemoteAddr), req.Action)
+		s.cfg.Logger.Logf("[soap] %s action %q → 401", httpd.ClientIP(r.RemoteAddr), req.Action)
 		_, _ = w.Write(soapFault(w, upnpInvalidAction, "Invalid Action"))
 	}
 }
 
 func (s *Server) actionBrowse(w http.ResponseWriter, r *http.Request, req soapRequest) {
-	ip := clientIP(r.RemoteAddr)
+	ip := httpd.ClientIP(r.RemoteAddr)
 	id := strings.TrimSpace(req.Args["ObjectID"])
 	flag := strings.TrimSpace(req.Args["BrowseFlag"])
 	start, errStart := parseIndex(req.Args["StartingIndex"])

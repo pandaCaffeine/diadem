@@ -20,8 +20,8 @@ import (
 	"github.com/pandaCaffeine/diadem/internal/logx"
 )
 
-// clientIP extracts the host part of an addr like "192.0.2.4:52341".
-func clientIP(remoteAddr string) string {
+// ClientIP extracts the host part of an addr like "192.0.2.4:52341".
+func ClientIP(remoteAddr string) string {
 	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
 		return host
 	}
@@ -98,10 +98,10 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 
 	if s.Observer != nil {
-		s.Observer.ObserveStream(clientIP(r.RemoteAddr), r.UserAgent(), info.Name())
+		s.Observer.ObserveStream(ClientIP(r.RemoteAddr), r.UserAgent(), info.Name())
 	}
 
-	ip := clientIP(r.RemoteAddr)
+	ip := ClientIP(r.RemoteAddr)
 	size := info.Size()
 	// Only video earns the Watched mark (CONTEXT.md): audio and photos
 	// are reported to the stream tracker but never to the byte counter.

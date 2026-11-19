@@ -12,9 +12,12 @@ package format
 
 import (
 	"errors"
+	"io"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // maxTitleLen caps how many bytes of a title string are accepted;
@@ -48,4 +51,48 @@ func Read(path string) (Meta, error) {
 	default:
 		return Meta{}, ErrUnsupported
 	}
+}
+
+// readAt reads up to n bytes at off; a short read at EOF is fine.
+func readAt(f io.ReaderAt, off int64, n int64) ([]byte, error) {
+	if n <= 0 {
+		return nil, nil
+	}
+	b := make([]byte, n)
+	m, err := f.ReadAt(b, off)
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+	return b[:m], nil
+}
+
+func min64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// decodeText cleans up a raw text payload: UTF-16 with BOM is decoded,
+// invalid bytes are dropped, NUL padding and surrounding space trimmed.
+// An empty or over-long result is treated as "no title".
+func decodeText(b []byte) string {
+	if len(b) >= 2 && (b[0] == 0xFF && b[1] == 0xFE || b[0] == 0xFE && b[1] == 0xFF) {
+		be := b[0] == 0xFE && b[1] == 0xFF
+		u := make([]uint16, 0, (len(b)-2)/2)
+		for i := 2; i+1 < len(b); i += 2 {
+			if be {
+				u = append(u, uint16(b[i])<<8|uint16(b[i+1]))
+			} else {
+				u = append(u, uint16(b[i+1])<<8|uint16(b[i]))
+			}
+		}
+		b = []byte(string(utf16.Decode(u)))
+	}
+	s := strings.ToValidUTF8(string(b), "")
+	s = strings.Trim(strings.TrimRight(s, "\x00"), " \t\r\n")
+	if utf8.RuneCountInString(s) > maxTitleLen {
+		s = string([]rune(s)[:maxTitleLen])
+	}
+	return s
 }

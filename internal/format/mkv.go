@@ -63,9 +63,9 @@ func readElem(f io.ReaderAt, off, end int64) (e elem, ok bool) {
 // readVINT reads one EBML variable-size integer at off. The length is
 // the position of the first set bit of the first byte. For ids the
 // marker bit stays part of the value; for sizes it is stripped, and a
-// value of all ones means "unknown". The returned length covers both
-// vints' bytes; valueOffset is not needed because callers read the data
-// themselves.
+// value of all ones means "unknown". The returned length is the vint's
+// full byte width, marker bits included, so whatever follows the vint
+// starts at off+length.
 func readVINT(f io.ReaderAt, off, end int64, id bool) (value uint64, length int, unknown bool, ok bool) {
 	var b [8]byte
 	if off < 0 || off+1 > end {

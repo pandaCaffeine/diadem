@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,14 +39,11 @@ func (m Model) popupView(n *library.Node) string {
 
 // watchedAt reports when this Node became Watched, for the details popup.
 func (m Model) watchedAt(n *library.Node) (int64, bool) {
-	if m.watch == nil || n.Kind != library.Item || n.Media != library.MediaVideo || n.Size <= 0 {
+	k, ok := m.watchKey(n)
+	if !ok {
 		return 0, false
 	}
-	rel, err := filepath.Rel(m.path, n.Path)
-	if err != nil {
-		return 0, false
-	}
-	return m.watch.MarkedAt(rel, n.Size)
+	return m.watch.MarkedAt(k.RelPath, k.Size)
 }
 
 // overlayPopup centers the popup over the view as a modal band.
