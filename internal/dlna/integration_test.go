@@ -300,6 +300,20 @@ func TestBrowseFaults(t *testing.T) {
 	if code := faultCode(t, searchBody); code != 401 {
 		t.Errorf("Search: errorCode = %d, want 401", code)
 	}
+
+	// A negative StartingIndex is client garbage: a 402, never a panic.
+	req, _ = http.NewRequest(http.MethodPost, baseURL+"/ctl/ContentDirectory",
+		strings.NewReader(`<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:Browse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1"><ObjectID>0</ObjectID><BrowseFlag>BrowseDirectChildren</BrowseFlag><Filter>*</Filter><StartingIndex>-1</StartingIndex><RequestedCount>0</RequestedCount><SortCriteria></SortCriteria></u:Browse></s:Body></s:Envelope>`))
+	req.Header.Set("SOAPACTION", `"urn:schemas-upnp-org:service:ContentDirectory:1#Browse"`)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	negBody := readAll(t, resp)
+	resp.Body.Close()
+	if code := faultCode(t, negBody); code != 402 {
+		t.Errorf("negative index: errorCode = %d, want 402", code)
+	}
 }
 
 func TestConnectionManagerAndMisc(t *testing.T) {

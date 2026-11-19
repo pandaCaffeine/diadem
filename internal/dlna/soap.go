@@ -166,3 +166,10 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request, dispatch func(h
 func esc(b *strings.Builder, s string) {
 	_ = xml.EscapeText(b, []byte(s)) // never fails on strings.Builder
 }
+
+// escString returns s escaped as XML text or attribute content.
+func escString(s string) string {
+	var b strings.Builder
+	esc(&b, s)
+	return b.String()
+}
