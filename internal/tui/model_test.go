@@ -382,7 +382,7 @@ func TestToggleWatched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reloaded.Watched(rel, video.Size) {
+	if !reloaded.Watched(watch.Key{RelPath: rel, Size: video.Size}) {
 		t.Error("mark did not persist under the path+size key")
 	}
 

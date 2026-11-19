@@ -36,28 +36,34 @@ var (
 	spinnerStyle = lipgloss.NewStyle().Foreground(colorTitle)
 )
 
-// kindStyle picks the row color for an Item by its MediaKind.
+// kindStyles maps a Media Kind to its row color.
+var kindStyles = map[library.MediaKind]lipgloss.Style{
+	library.MediaVideo: styleVideo,
+	library.MediaAudio: styleAudio,
+	library.MediaPhoto: stylePhoto,
+}
+
+// kindIcons maps a Media Kind to the friendly glyph shown before an
+// Item's name.
+var kindIcons = map[library.MediaKind]string{
+	library.MediaVideo: "🎬",
+	library.MediaAudio: "🎵",
+	library.MediaPhoto: "🏞️",
+}
+
+// kindStyle picks the row color for an Item by its Media Kind, dim for
+// anything unrecognized.
 func kindStyle(k library.MediaKind) lipgloss.Style {
-	switch k {
-	case library.MediaVideo:
-		return styleVideo
-	case library.MediaAudio:
-		return styleAudio
-	case library.MediaPhoto:
-		return stylePhoto
+	if s, ok := kindStyles[k]; ok {
+		return s
 	}
 	return styleDim
 }
 
 // icon returns the friendly glyph shown before an Item's name.
 func icon(k library.MediaKind) string {
-	switch k {
-	case library.MediaVideo:
-		return "🎬"
-	case library.MediaAudio:
-		return "🎵"
-	case library.MediaPhoto:
-		return "🏞️"
+	if s, ok := kindIcons[k]; ok {
+		return s
 	}
 	return "·"
 }

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/pandaCaffeine/diadem/internal/watch"
 )
 
 type fakeBytesObserver struct {
@@ -16,13 +18,12 @@ type fakeBytesObserver struct {
 }
 
 type bytesCall struct {
-	relPath   string
-	size      int64
+	k         watch.Key
 	delivered int64
 }
 
-func (f *fakeBytesObserver) ObserveBytes(relPath string, size, delivered int64) {
-	f.calls = append(f.calls, bytesCall{relPath, size, delivered})
+func (f *fakeBytesObserver) ObserveBytes(k watch.Key, delivered int64) {
+	f.calls = append(f.calls, bytesCall{k, delivered})
 }
 
 func newBytesServer(t *testing.T, name string, size int) (*Server, *fakeBytesObserver, *httptest.Server) {
@@ -55,7 +56,7 @@ func TestObserveBytesRangeAndFull(t *testing.T) {
 	if len(obs.calls) != 1 {
 		t.Fatalf("observer calls = %d, want 1", len(obs.calls))
 	}
-	if c := obs.calls[0]; c.relPath != "clip.mp4" || c.size != 16 || c.delivered != 16 {
+	if c := obs.calls[0]; c.k.RelPath != "clip.mp4" || c.k.Size != 16 || c.delivered != 16 {
 		t.Errorf("call = %+v", c)
 	}
 

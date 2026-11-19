@@ -193,9 +193,15 @@ func run(name, path string, port int, debug bool) error {
 		Watch:   watchState,
 	}), tea.WithAltScreen())
 	_, err = program.Run()
+	return windDown(ssdp, httpServer, watcher, watchState, logs, logPath, err)
+}
 
-	// Graceful wind-down: tell clients goodbye, let transfers drain for a
-	// couple of seconds, stop watching, flush the log.
+// windDown shuts everything down in order: ssdp:byebye first so clients
+// drop us immediately, then the HTTP server drains for a couple of
+// seconds, the fs watcher stops, the Watch State and the log flush.
+// runErr (from the TUI) wins over shutdown errors; the rest still
+// surface in priority order.
+func windDown(ssdp *dlna.SSDP, httpServer *http.Server, watcher *library.Watcher, watchState *watch.Tracker, logs *logx.Recorder, logPath string, runErr error) error {
 	byeErr := ssdp.Close() // ssdp:byebye, so clients drop us immediately
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -204,8 +210,8 @@ func run(name, path string, port int, debug bool) error {
 	flushErr := watchState.Flush() // persist the last marks before exiting
 	logs.Logf("[main] stopped")
 	closeErr := logs.Close()
-	if err != nil {
-		return err
+	if runErr != nil {
+		return runErr
 	}
 
 	fmt.Println("★ Diadem stopped.")

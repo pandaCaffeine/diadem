@@ -16,11 +16,16 @@ func newTestTracker(t *testing.T) (*Tracker, string) {
 	return tr, file
 }
 
+// key builds a watch Key; the shorthand keeps the call sites dense.
+func key(rel string, size int64) Key {
+	return Key{RelPath: rel, Size: size}
+}
+
 func TestRoundTrip(t *testing.T) {
 	tr, file := newTestTracker(t)
 	tr.Load()
 
-	tr.ToggleWatched("movies/a.mkv", 100)
+	tr.ToggleWatched(key("movies/a.mkv", 100))
 	if err := tr.Flush(); err != nil {
 		t.Fatal(err)
 	}
@@ -47,13 +52,13 @@ func TestRoundTrip(t *testing.T) {
 	// file and starts unwatched.
 	reloaded := New(file, nil)
 	reloaded.Load()
-	if !reloaded.Watched("movies/a.mkv", 100) {
+	if !reloaded.Watched(key("movies/a.mkv", 100)) {
 		t.Error("mark did not survive the restart")
 	}
-	if reloaded.Watched("movies/a.mkv", 101) {
+	if reloaded.Watched(key("movies/a.mkv", 101)) {
 		t.Error("a different size must not inherit the mark")
 	}
-	if at, ok := reloaded.MarkedAt("movies/a.mkv", 100); !ok || at <= 0 {
+	if at, ok := reloaded.MarkedAt(key("movies/a.mkv", 100)); !ok || at <= 0 {
 		t.Errorf("MarkedAt = %d %v, want the saved timestamp", at, ok)
 	}
 }
@@ -80,7 +85,7 @@ func TestCorruptFileStartsEmpty(t *testing.T) {
 
 	tr := New(file, nil)
 	tr.Load()
-	if tr.Watched("a.mkv", 1) {
+	if tr.Watched(key("a.mkv", 1)) {
 		t.Error("corrupt state must not yield marks")
 	}
 	// The next flush overwrites the corrupt file with a valid mirror.
@@ -103,7 +108,7 @@ func TestUnsupportedVersionStartsEmpty(t *testing.T) {
 	}
 	tr := New(file, nil)
 	tr.Load()
-	if tr.Watched("a.mkv", 1) {
+	if tr.Watched(key("a.mkv", 1)) {
 		t.Error("a future format must not be read as v1")
 	}
 }
@@ -114,28 +119,28 @@ func TestObserveBytesThreshold(t *testing.T) {
 
 	const size = 1000
 	// watchedBytes(1000) = 300: strictly below stays unwatched.
-	tr.ObserveBytes("v.mkv", size, 150)
-	tr.ObserveBytes("v.mkv", size, 149) // 299 total
-	if tr.Watched("v.mkv", size) {
+	tr.ObserveBytes(key("v.mkv", size), 150)
+	tr.ObserveBytes(key("v.mkv", size), 149) // 299 total
+	if tr.Watched(key("v.mkv", size)) {
 		t.Fatal("marked below the threshold")
 	}
-	tr.ObserveBytes("v.mkv", size, 1) // 300 total — the mark
-	if !tr.Watched("v.mkv", size) {
+	tr.ObserveBytes(key("v.mkv", size), 1) // 300 total — the mark
+	if !tr.Watched(key("v.mkv", size)) {
 		t.Fatal("not marked at the threshold")
 	}
-	if at, ok := tr.MarkedAt("v.mkv", size); !ok || at <= 0 {
+	if at, ok := tr.MarkedAt(key("v.mkv", size)); !ok || at <= 0 {
 		t.Errorf("MarkedAt = %d %v", at, ok)
 	}
 
 	// A Watched Item stops counting; repeated pulls cannot unmark it.
-	tr.ObserveBytes("v.mkv", size, 10_000)
-	if !tr.Watched("v.mkv", size) {
+	tr.ObserveBytes(key("v.mkv", size), 10_000)
+	if !tr.Watched(key("v.mkv", size)) {
 		t.Error("a rewatch unmarked the Item")
 	}
 	// Degenerate sizes never mark.
-	tr.ObserveBytes("zero.mkv", 0, 5)
-	tr.ObserveBytes("empty.mkv", 100, 0)
-	if tr.Watched("zero.mkv", 0) || tr.Watched("empty.mkv", 100) {
+	tr.ObserveBytes(key("zero.mkv", 0), 5)
+	tr.ObserveBytes(key("empty.mkv", 100), 0)
+	if tr.Watched(key("zero.mkv", 0)) || tr.Watched(key("empty.mkv", 100)) {
 		t.Error("degraded report marked an Item")
 	}
 }
@@ -144,22 +149,22 @@ func TestToggleUnmarkThenReearn(t *testing.T) {
 	tr, _ := newTestTracker(t)
 	tr.Load()
 
-	tr.ToggleWatched("v.mkv", 100)
-	if !tr.Watched("v.mkv", 100) {
+	tr.ToggleWatched(key("v.mkv", 100))
+	if !tr.Watched(key("v.mkv", 100)) {
 		t.Fatal("manual mark missing")
 	}
-	tr.ToggleWatched("v.mkv", 100)
-	if tr.Watched("v.mkv", 100) {
+	tr.ToggleWatched(key("v.mkv", 100))
+	if tr.Watched(key("v.mkv", 100)) {
 		t.Fatal("manual unmark missing")
 	}
 	// The counter restarted from zero: below the threshold stays
 	// unwatched, past it the mark is earned again.
-	tr.ObserveBytes("v.mkv", 100, 10)
-	if tr.Watched("v.mkv", 100) {
+	tr.ObserveBytes(key("v.mkv", 100), 10)
+	if tr.Watched(key("v.mkv", 100)) {
 		t.Fatal("marked before the threshold after unmark")
 	}
-	tr.ObserveBytes("v.mkv", 100, 20) // 30 of 100 = the threshold
-	if !tr.Watched("v.mkv", 100) {
+	tr.ObserveBytes(key("v.mkv", 100), 20) // 30 of 100 = the threshold
+	if !tr.Watched(key("v.mkv", 100)) {
 		t.Fatal("mark not earned back")
 	}
 }
@@ -178,27 +183,27 @@ func TestPrune(t *testing.T) {
 		{Name: "b.mkv", Path: "/t/b.mkv", Kind: library.Item, Media: library.MediaVideo, Size: 7},
 	}
 
-	tr.ToggleWatched("movies/a.mkv", 5)   // alive: file matches the tree
-	tr.ToggleWatched("movies/a.mkv", 9)   // replaced by another size → dies
-	tr.ToggleWatched("movies/old.mkv", 1) // deleted → dies
-	tr.ToggleWatched("ghost/x.mkv", 2)    // whole region absent → lives
-	tr.ToggleWatched("b.mkv", 7)          // alive
+	tr.ToggleWatched(key("movies/a.mkv", 5))   // alive: file matches the tree
+	tr.ToggleWatched(key("movies/a.mkv", 9))   // replaced by another size → dies
+	tr.ToggleWatched(key("movies/old.mkv", 1)) // deleted → dies
+	tr.ToggleWatched(key("ghost/x.mkv", 2))    // whole region absent → lives
+	tr.ToggleWatched(key("b.mkv", 7))          // alive
 
 	tr.Prune(root)
 
-	if !tr.Watched("movies/a.mkv", 5) {
+	if !tr.Watched(key("movies/a.mkv", 5)) {
 		t.Error("pruned a live file")
 	}
-	if !tr.Watched("b.mkv", 7) {
+	if !tr.Watched(key("b.mkv", 7)) {
 		t.Error("pruned a live top-level file")
 	}
-	if tr.Watched("movies/a.mkv", 9) {
+	if tr.Watched(key("movies/a.mkv", 9)) {
 		t.Error("kept an entry for a file replaced by another size")
 	}
-	if tr.Watched("movies/old.mkv", 1) {
+	if tr.Watched(key("movies/old.mkv", 1)) {
 		t.Error("kept an entry for a deleted file")
 	}
-	if !tr.Watched("ghost/x.mkv", 2) {
+	if !tr.Watched(key("ghost/x.mkv", 2)) {
 		t.Error("pruned an entry whose region is absent from the tree")
 	}
 }
@@ -206,9 +211,9 @@ func TestPrune(t *testing.T) {
 func TestPruneNilRoot(t *testing.T) {
 	tr, _ := newTestTracker(t)
 	tr.Load()
-	tr.ToggleWatched("a.mkv", 1)
+	tr.ToggleWatched(key("a.mkv", 1))
 	tr.Prune(nil) // must not panic and must not touch anything
-	if !tr.Watched("a.mkv", 1) {
+	if !tr.Watched(key("a.mkv", 1)) {
 		t.Error("nil snapshot pruned entries")
 	}
 }
@@ -219,14 +224,14 @@ func TestPruneKeepsEntriesUntilParentKnown(t *testing.T) {
 	// the region below is simply not visible yet.
 	tr, _ := newTestTracker(t)
 	tr.Load()
-	tr.ToggleWatched("a.mkv", 1)
-	tr.ToggleWatched("sub/b.mkv", 2)
+	tr.ToggleWatched(key("a.mkv", 1))
+	tr.ToggleWatched(key("sub/b.mkv", 2))
 	tr.Prune(&library.Node{Name: "Lib", Path: "/t", Kind: library.Container})
 
-	if tr.Watched("a.mkv", 1) {
+	if tr.Watched(key("a.mkv", 1)) {
 		t.Error("kept an entry for a top-level file the root container proves absent")
 	}
-	if !tr.Watched("sub/b.mkv", 2) {
+	if !tr.Watched(key("sub/b.mkv", 2)) {
 		t.Error("pruned an entry in a container the snapshot does not show")
 	}
 }
@@ -234,9 +239,9 @@ func TestPruneKeepsEntriesUntilParentKnown(t *testing.T) {
 func TestSaveSortsEntries(t *testing.T) {
 	tr, file := newTestTracker(t)
 	tr.Load()
-	tr.ToggleWatched("z.mkv", 1)
-	tr.ToggleWatched("a/m.mkv", 2)
-	tr.ToggleWatched("a.mkv", 3)
+	tr.ToggleWatched(key("z.mkv", 1))
+	tr.ToggleWatched(key("a/m.mkv", 2))
+	tr.ToggleWatched(key("a.mkv", 3))
 	if err := tr.Flush(); err != nil {
 		t.Fatal(err)
 	}
@@ -275,8 +280,8 @@ func TestPruneAgainstRealScan(t *testing.T) {
 	}
 	tr := New(filepath.Join(dir, ".diadem", "watched.json"), nil)
 	tr.Load()
-	tr.ToggleWatched("movies/a.mkv", 10)
-	tr.ToggleWatched("gone.mkv", 10)
+	tr.ToggleWatched(key("movies/a.mkv", 10))
+	tr.ToggleWatched(key("gone.mkv", 10))
 
 	// The file leaves the disk, a rescan sees the tree without it, and
 	// the next prune forgets the mark.
@@ -289,10 +294,10 @@ func TestPruneAgainstRealScan(t *testing.T) {
 	}
 	tr.Prune(lib.Root)
 
-	if !tr.Watched("movies/a.mkv", 10) {
+	if !tr.Watched(key("movies/a.mkv", 10)) {
 		t.Error("pruned an entry for a live file")
 	}
-	if tr.Watched("gone.mkv", 10) {
+	if tr.Watched(key("gone.mkv", 10)) {
 		t.Error("kept an entry for a deleted file")
 	}
 }

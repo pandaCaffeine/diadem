@@ -18,6 +18,7 @@ import (
 
 	"github.com/pandaCaffeine/diadem/internal/library"
 	"github.com/pandaCaffeine/diadem/internal/logx"
+	"github.com/pandaCaffeine/diadem/internal/watch"
 )
 
 // ClientIP extracts the host part of an addr like "192.0.2.4:52341".
@@ -36,9 +37,9 @@ type StreamObserver interface {
 
 // BytesObserver reports how many bytes of an Item actually reached
 // clients — the raw material for marking it Watched (CONTEXT.md).
-// Satisfied structurally by watch.Tracker.
+// Satisfied structurally by watch.Tracker, which also owns Key.
 type BytesObserver interface {
-	ObserveBytes(relPath string, size, delivered int64)
+	ObserveBytes(k watch.Key, delivered int64)
 }
 
 // Server serves the Library rooted at root over HTTP.
@@ -70,45 +71,22 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+// serveFile answers /files/... with the whole Item (200) or one byte
+// window (206). openLibraryFile validates and opens the file; then the
+// Range header decides: unsatisfiable → 416 naming the true size,
+// satisfiable → 206 streaming just that window, absent or malformed →
+// 200 with the whole file. HEAD walks the same path but sends no body,
+// and only GET bytes feed the Watched counter.
 func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet, http.MethodHead:
-	default:
-		w.Header().Set("Allow", "GET, HEAD")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	rel, ok := s.resolve(r.URL.Path)
+	f, rel, size, isVideo, ok := s.openLibraryFile(w, r)
 	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	full := filepath.Join(s.root, rel)
-	info, err := os.Stat(full)
-	if err != nil || !info.Mode().IsRegular() {
-		http.NotFound(w, r)
-		return
-	}
-	f, err := os.Open(full)
-	if err != nil {
-		http.NotFound(w, r)
 		return
 	}
 	defer f.Close()
 
-	if s.Observer != nil {
-		s.Observer.ObserveStream(ClientIP(r.RemoteAddr), r.UserAgent(), info.Name())
-	}
-
 	ip := ClientIP(r.RemoteAddr)
-	size := info.Size()
-	// Only video earns the Watched mark (CONTEXT.md): audio and photos
-	// are reported to the stream tracker but never to the byte counter.
-	kind, _ := library.KindByExt(info.Name())
-	isVideo := kind == library.MediaVideo
 	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Content-Type", ContentType(info.Name()))
+	w.Header().Set("Content-Type", ContentType(filepath.Base(rel)))
 
 	rng, satisfiable, rangeErr := parseRange(r.Header.Get("Range"), size)
 	switch {
@@ -128,7 +106,7 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 		}
 		n, _ := io.Copy(w, io.NewSectionReader(f, rng.start, length))
 		s.Logger.Logf("[http] %s GET %s → 206 %d/%dB", ip, r.URL.Path, n, size)
-		s.reportBytes(rel, size, n, isVideo)
+		s.reportBytes(watch.Key{RelPath: rel, Size: size}, n, isVideo)
 	default: // no Range header, or malformed: send the whole file
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
 		w.WriteHeader(http.StatusOK)
@@ -138,18 +116,57 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 		}
 		n, _ := io.Copy(w, f)
 		s.Logger.Logf("[http] %s GET %s → 200 %dB", ip, r.URL.Path, n)
-		s.reportBytes(rel, size, n, isVideo)
+		s.reportBytes(watch.Key{RelPath: rel, Size: size}, n, isVideo)
 	}
+}
+
+// openLibraryFile validates the request, resolves the /files/ URL to an
+// Item and opens it, telling the stream observer who is fetching what.
+// It answers the client itself (405, 404) and reports ok=false on
+// failure; on success the response is still untouched.
+func (s *Server) openLibraryFile(w http.ResponseWriter, r *http.Request) (f *os.File, rel string, size int64, isVideo bool, ok bool) {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+	default:
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, "", 0, false, false
+	}
+
+	rel, ok = s.resolve(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
+		return nil, "", 0, false, false
+	}
+	full := filepath.Join(s.root, rel)
+	info, err := os.Stat(full)
+	if err != nil || !info.Mode().IsRegular() {
+		http.NotFound(w, r)
+		return nil, "", 0, false, false
+	}
+	f, err = os.Open(full)
+	if err != nil {
+		http.NotFound(w, r)
+		return nil, "", 0, false, false
+	}
+
+	if s.Observer != nil {
+		s.Observer.ObserveStream(ClientIP(r.RemoteAddr), r.UserAgent(), info.Name())
+	}
+	// Only video earns the Watched mark (CONTEXT.md): audio and photos
+	// are reported to the stream tracker but never to the byte counter.
+	kind, _ := library.KindByExt(info.Name())
+	return f, rel, info.Size(), kind == library.MediaVideo, true
 }
 
 // reportBytes tells the Watch State what actually left the server. A
 // partial count after an aborted transfer still counts: playback is a
 // stream of aborted-and-retried range requests.
-func (s *Server) reportBytes(rel string, size, delivered int64, isVideo bool) {
+func (s *Server) reportBytes(k watch.Key, delivered int64, isVideo bool) {
 	if s.BytesObserver == nil || !isVideo || delivered <= 0 {
 		return
 	}
-	s.BytesObserver.ObserveBytes(rel, size, delivered)
+	s.BytesObserver.ObserveBytes(k, delivered)
 }
 
 // resolve maps a /files/... URL path to a library-relative filesystem

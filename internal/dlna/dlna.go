@@ -14,6 +14,7 @@ import (
 	"github.com/pandaCaffeine/diadem/internal/httpd"
 	"github.com/pandaCaffeine/diadem/internal/library"
 	"github.com/pandaCaffeine/diadem/internal/logx"
+	"github.com/pandaCaffeine/diadem/internal/watch"
 )
 
 // Config describes one running Diadem server.
@@ -36,7 +37,7 @@ type Config struct {
 	// IsWatched, when set, reports whether a video Item carries the
 	// Watched mark; the marker joins its Display Title. Wired to
 	// watch.Tracker in main.
-	IsWatched func(relPath string, size int64) bool
+	IsWatched func(k watch.Key) bool
 
 	// Logger receives diagnostics for the Logs tab and --debug file.
 	// Defaults to a no-op logger.

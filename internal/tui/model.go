@@ -219,7 +219,7 @@ func (m Model) toggleWatched(n *library.Node) {
 	if !ok {
 		return
 	}
-	m.watch.ToggleWatched(k.RelPath, k.Size)
+	m.watch.ToggleWatched(k)
 }
 
 // isWatched reports whether the tree should show the mark for this Node.
@@ -228,7 +228,7 @@ func (m Model) isWatched(n *library.Node) bool {
 	if !ok {
 		return false
 	}
-	return m.watch.Watched(k.RelPath, k.Size)
+	return m.watch.Watched(k)
 }
 
 // watchKey maps a Node to its Watch State key (CONTEXT.md: Watched):

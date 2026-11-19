@@ -43,7 +43,7 @@ func (m Model) watchedAt(n *library.Node) (int64, bool) {
 	if !ok {
 		return 0, false
 	}
-	return m.watch.MarkedAt(k.RelPath, k.Size)
+	return m.watch.MarkedAt(k)
 }
 
 // overlayPopup centers the popup over the view as a modal band.

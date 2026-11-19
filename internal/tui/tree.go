@@ -113,15 +113,14 @@ func (t *TreeView) clamp() {
 		return
 	}
 	t.cursor = clamp(t.cursor, 0, len(rows)-1)
-	if h := max(t.Height, 1); t.offset > t.cursor {
-		t.offset = t.cursor
-	} else if t.offset > len(rows)-1 {
+	if t.offset > len(rows)-1 {
 		t.offset = len(rows) - 1
-	} else if t.cursor >= t.offset+h {
-		t.offset = t.cursor - h + 1
 	}
+	t.ensureVisible()
 }
 
+// ensureVisible scrolls the offset, and only the offset, so the cursor
+// row is back inside the viewport.
 func (t *TreeView) ensureVisible() {
 	h := max(t.Height, 1)
 	if t.cursor < t.offset {

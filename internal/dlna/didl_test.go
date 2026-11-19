@@ -9,6 +9,7 @@ import (
 
 	"github.com/pandaCaffeine/diadem/internal/format"
 	"github.com/pandaCaffeine/diadem/internal/library"
+	"github.com/pandaCaffeine/diadem/internal/watch"
 )
 
 // Golden DIDL-Lite: exactly what a Browse of the root returns, including
@@ -187,8 +188,8 @@ func TestNodeForAndIDs(t *testing.T) {
 }
 
 func TestItemElementWatchedMarker(t *testing.T) {
-	isWatched := func(relPath string, size int64) bool {
-		return relPath == "seen.mkv" && size == 42
+	isWatched := func(k watch.Key) bool {
+		return k.RelPath == "seen.mkv" && k.Size == 42
 	}
 	s := New(Config{Root: "/m", BaseURL: "http://h:1", FriendlyName: "Diadem", IsWatched: isWatched})
 

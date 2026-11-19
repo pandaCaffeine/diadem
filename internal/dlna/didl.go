@@ -7,6 +7,7 @@ import (
 
 	"github.com/pandaCaffeine/diadem/internal/httpd"
 	"github.com/pandaCaffeine/diadem/internal/library"
+	"github.com/pandaCaffeine/diadem/internal/watch"
 )
 
 const (
@@ -71,7 +72,7 @@ func (s *Server) itemElement(n *library.Node, id, parentID string) string {
 	}
 
 	title := displayTitle(n)
-	if n.Media == library.MediaVideo && s.cfg.IsWatched != nil && s.cfg.IsWatched(id, n.Size) {
+	if n.Media == library.MediaVideo && s.cfg.IsWatched != nil && s.cfg.IsWatched(watch.Key{RelPath: id, Size: n.Size}) {
 		title += watchedMarker
 	}
 
