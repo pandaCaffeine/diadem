@@ -30,6 +30,7 @@ var (
 	styleVideo   = lipgloss.NewStyle().Foreground(colorVideo)
 	styleAudio   = lipgloss.NewStyle().Foreground(colorAudio)
 	stylePhoto   = lipgloss.NewStyle().Foreground(colorPhoto)
+	styleWatched = lipgloss.NewStyle().Foreground(colorAudio) // green: the Item has been Watched
 	styleSel     = lipgloss.NewStyle().Background(colorSelBg).Foreground(colorSelFg)
 	popupStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorTitle).Padding(1, 3)
 	spinnerStyle = lipgloss.NewStyle().Foreground(colorTitle)

@@ -34,12 +34,23 @@ type StreamObserver interface {
 	ObserveStream(ip, userAgent, name string)
 }
 
+// BytesObserver reports how many bytes of an Item actually reached
+// clients — the raw material for marking it Watched (CONTEXT.md).
+// Satisfied structurally by watch.Tracker.
+type BytesObserver interface {
+	ObserveBytes(relPath string, size, delivered int64)
+}
+
 // Server serves the Library rooted at root over HTTP.
 type Server struct {
 	root string
 
 	// Observer, when set, is notified about every served file fetch.
 	Observer StreamObserver
+
+	// BytesObserver, when set, is notified about every served byte
+	// count of a video Item.
+	BytesObserver BytesObserver
 
 	// Logger receives a line per served request (and 416s). Defaults to
 	// a no-op logger.
@@ -92,6 +103,10 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 
 	ip := clientIP(r.RemoteAddr)
 	size := info.Size()
+	// Only video earns the Watched mark (CONTEXT.md): audio and photos
+	// are reported to the stream tracker but never to the byte counter.
+	kind, _ := library.KindByExt(info.Name())
+	isVideo := kind == library.MediaVideo
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Type", ContentType(info.Name()))
 
@@ -113,6 +128,7 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 		}
 		n, _ := io.Copy(w, io.NewSectionReader(f, rng.start, length))
 		s.Logger.Logf("[http] %s GET %s → 206 %d/%dB", ip, r.URL.Path, n, size)
+		s.reportBytes(rel, size, n, isVideo)
 	default: // no Range header, or malformed: send the whole file
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
 		w.WriteHeader(http.StatusOK)
@@ -122,7 +138,18 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 		}
 		n, _ := io.Copy(w, f)
 		s.Logger.Logf("[http] %s GET %s → 200 %dB", ip, r.URL.Path, n)
+		s.reportBytes(rel, size, n, isVideo)
 	}
+}
+
+// reportBytes tells the Watch State what actually left the server. A
+// partial count after an aborted transfer still counts: playback is a
+// stream of aborted-and-retried range requests.
+func (s *Server) reportBytes(rel string, size, delivered int64, isVideo bool) {
+	if s.BytesObserver == nil || !isVideo || delivered <= 0 {
+		return
+	}
+	s.BytesObserver.ObserveBytes(rel, size, delivered)
 }
 
 // resolve maps a /files/... URL path to a library-relative filesystem
